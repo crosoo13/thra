@@ -16,7 +16,7 @@ SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 
 # --- Конфигурация Gemini AI ---
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-GEMINI_MODEL_NAME = 'gemini-1.5-flash'
+GEMINI_MODEL_NAME = 'gemini-2.5-flash'
 
 # --- Конфигурация Внешних Сервисов ---
 CLOUDFLARE_WORKER_URL = os.getenv('CLOUDFLARE_WORKER_URL')
