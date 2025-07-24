@@ -17,9 +17,9 @@ SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 # --- Конфигурация Gemini AI (ИЗМЕНЕННЫЙ БЛОК) ---
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 # Модель для быстрой и дешевой классификации (Сортировщик)
-GEMINI_FLASH_MODEL_NAME = 'gemini-1.5-flash-latest'
+GEMINI_FLASH_MODEL_NAME = 'gemini-2.5-flash'
 # Модель для генерации качественных ответов (Генератор)
-GEMINI_PRO_MODEL_NAME = 'gemini-1.5-pro-latest'
+GEMINI_PRO_MODEL_NAME = 'gemini-2.5-pro'
 
 
 # --- Конфигурация Внешних Сервисов ---
