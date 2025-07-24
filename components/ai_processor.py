@@ -47,10 +47,7 @@ async def generate_final_reply(message, persona: str, chat_id: int):
     """
     ЭТАП 2: Вызывает Gemini Pro для генерации финального ответа на основе выбранной личности.
     """
-    # 👇👇👇 ВОТ ИСПРАВЛЕНИЕ! 👇👇👇
-    # Приводим имя персоны к нижнему регистру перед поиском в БД
     prompt_name = f"{persona.lower()}_prompt"
-    
     print(f"   🤖 Этап 2: Генерация ответа с личностью '{persona}' (запрос промпта: '{prompt_name}')...")
 
     prompt_template = db.get_prompt_template(prompt_name)
@@ -58,7 +55,18 @@ async def generate_final_reply(message, persona: str, chat_id: int):
         print(f"   ❌ Не найден промпт '{prompt_name}' в базе данных!")
         return None
 
-    full_prompt = prompt_template.replace('{message_text}', message.text)
+    # --- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ---
+    # 1. Создаем словарь с данными сообщения
+    message_data_for_prompt = {
+        "id": message.id,
+        "text": message.text.strip()
+    }
+    # 2. Превращаем словарь в JSON-строку
+    message_json_string = json.dumps(message_data_for_prompt, ensure_ascii=False)
+
+    # 3. Вставляем эту JSON-строку в промпт, заменяя единый плейсхолдер
+    #    (Убедитесь, что ваши промпты в БД теперь используют `{message_json}`)
+    full_prompt = prompt_template.replace('{message_json}', message_json_string)
 
     try:
         response = await gemini_pro_model.generate_content_async(full_prompt)
@@ -73,6 +81,7 @@ async def generate_final_reply(message, persona: str, chat_id: int):
 
         action = ai_actions[0]
 
+        # Дополняем ответ нужной информацией перед отправкой на утверждение
         action.update({
             'target_chat_id': chat_id,
             'action_type': 'reply',
@@ -82,6 +91,9 @@ async def generate_final_reply(message, persona: str, chat_id: int):
         })
         return action
 
+    except json.JSONDecodeError:
+        print(f"   ❌ Ошибка: Gemini Pro вернул невалидный JSON. Ответ залогирован выше.")
+        return None
     except Exception as e:
         print(f"   ❌ Критическая ошибка на этапе генерации ответа: {e}")
         return None
