@@ -6,7 +6,8 @@ from . import approval_service
 
 async def process_chat(client, chat_info, prompt_template, prompt_name, my_id):
     """
-    Финальная версия цикла обработки одного чата со всеми исправлениями.
+    Финальная версия цикла обработки одного чата со всеми исправлениями
+    и строгим правилом "один ответ на один запуск".
     """
     original_chat_id = chat_info['chat_id']
     chat_type = chat_info.get('chat_type', 'group')
@@ -50,7 +51,7 @@ async def process_chat(client, chat_info, prompt_template, prompt_name, my_id):
 
         print(f"  📩 Найдено {len(messages_to_process)} новых сообщений.")
         
-        # --- ВОЗВРАЩАЕМ БЛОК ПРОВЕРКИ НА КЛЮЧЕВЫЕ СЛОВА ---
+        # --- БЛОК ПРОВЕРКИ НА КЛЮЧЕВЫЕ СЛОВА ---
         KEYWORD_TRIGGERS = ["массовый", "массового", "вахтой", "вахтовым"]
         print("  🔍 Проверка сообщений на ключевые слова...")
         for message in messages_to_process:
@@ -72,12 +73,25 @@ async def process_chat(client, chat_info, prompt_template, prompt_name, my_id):
         if not routing_decisions:
             print("  ℹ️ Сортировщик не вернул никаких решений. Обработка завершена.")
         else:
-            final_actions_to_approve = []
-            message_map = {msg.id: msg for msg in messages_to_process}
+            # --- БЛОК-ПРЕДОХРАНИТЕЛЬ: Выбираем только ОДИН ответ, даже если AI предложил несколько ---
+            decisions_to_reply = [d for d in routing_decisions if d.get('decision') == 'reply']
+            
+            final_decision_list = []
+            if decisions_to_reply:
+                # Если AI, нарушив промпт, предложил несколько ответов, мы все равно возьмем только первый.
+                if len(decisions_to_reply) > 1:
+                    print(f"  ⚠️ AI предложил {len(decisions_to_reply)} ответов. Выбираем только первый, согласно правилу.")
+                final_decision_list.append(decisions_to_reply[0])
+            # --- КОНЕЦ БЛОКА-ПРЕДОХРАНИТЕЛЯ ---
 
-            # ЭТАП 2: Генерируем ответы
-            for decision in routing_decisions:
-                if decision.get('decision') == 'reply':
+            if not final_decision_list:
+                print("  ✅ AI обработал сообщения, но не нашел ни одного подходящего для ответа.")
+            else:
+                final_actions_to_approve = []
+                message_map = {msg.id: msg for msg in messages_to_process}
+
+                # ЭТАП 2: Генерируем ответ для ЕДИНСТВЕННОГО выбранного сообщения
+                for decision in final_decision_list:
                     message_id = decision.get('message_id')
                     persona = decision.get('persona')
                     message_to_reply = message_map.get(message_id)
@@ -86,13 +100,13 @@ async def process_chat(client, chat_info, prompt_template, prompt_name, my_id):
                         final_action = await ai_processor.generate_final_reply(message_to_reply, persona, processing_id)
                         if final_action:
                             final_actions_to_approve.append(final_action)
-            
-            if final_actions_to_approve:
-                print(f"  🚀 Сгенерировано {len(final_actions_to_approve)} ответов. Отправка на утверждение...")
-                for action in final_actions_to_approve:
-                    approval_service.send_action_for_approval(action)
-            else:
-                 print("  ✅ AI обработал сообщения, но не сгенерировал ни одного ответа для отправки.")
+                
+                if final_actions_to_approve:
+                    print(f"  🚀 Сгенерирован 1 ответ. Отправка на утверждение...")
+                    # Отправляем единственное действие на утверждение
+                    approval_service.send_action_for_approval(final_actions_to_approve[0])
+                else:
+                    print("  ✅ AI решил ответить, но генератор не создал финальный текст.")
 
         # Обновляем ID последнего сообщения, только если были найдены новые
         if newest_message_id > last_id:
