@@ -83,14 +83,16 @@ def get_prompt_template(prompt_name: str):
         print(f"❌ Ошибка при загрузке промпта '{prompt_name}': {e}")
         return None
 
-def get_approved_examples(prompt_name: str, limit: int = 10):
-    """Получает последние N одобренных примеров для заданного промта."""
-    print(f"🔄 Запрос {limit} примеров для промта '{prompt_name}' из БД...")
+def get_examples_by_status(prompt_name: str, status: str, limit: int = 10):
+    """
+    Получает последние N примеров для заданного промта по статусу ('approved' или 'declined').
+    """
+    print(f"🔄 Запрос {limit} примеров со статусом '{status}' для промта '{prompt_name}'...")
     try:
         response = supabase.table('ai_suggestions_log').select(
             "original_message_text, ai_generated_text"
         ).eq(
-            'status', 'approved'
+            'status', status
         ).eq(
             'prompt_version', prompt_name
         ).order(
@@ -98,15 +100,16 @@ def get_approved_examples(prompt_name: str, limit: int = 10):
         ).limit(
             limit
         ).execute()
-        
+
         if response.data:
             print(f"✅ Найдено {len(response.data)} примеров.")
             # Возвращаем в обратном порядке, чтобы самые старые были первыми
-            return list(reversed(response.data)) 
+            return list(reversed(response.data))
         return []
     except Exception as e:
-        print(f"❌ Ошибка при получении примеров для '{prompt_name}': {e}")
+        print(f"❌ Ошибка при получении примеров для '{prompt_name}' со статусом '{status}': {e}")
         return []
+
 
 # --- Управление очередью на отправку ---
 
