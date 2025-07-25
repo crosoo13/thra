@@ -45,10 +45,9 @@ async def get_routing_decisions(messages):
         print(f"    ❌ Критическая ошибка на этапе сортировки: {e}")
         return []
 
-async def generate_final_reply(message, persona: str, chat_id: int):
+async def generate_final_reply(conversation_history, persona: str, chat_id: int, my_id: int):
     """
-    ЭТАП 2: Вызывает Gemini Pro для генерации финального ответа,
-    предварительно подгружая релевантные ОДОБРЕННЫЕ и ОТКЛОНЕННЫЕ примеры из БД.
+    ЭТАП 2: Вызывает Gemini Pro для генерации ответа, используя контекст переписки.
     """
     prompt_name = f"{persona.lower()}_prompt"
     print(f"  🤖 Этап 2: Генерация ответа с личностью '{persona}' (промпт: '{prompt_name}')...")
@@ -59,47 +58,37 @@ async def generate_final_reply(message, persona: str, chat_id: int):
         return None
 
     # --- ФОРМИРОВАНИЕ ПРИМЕРОВ ---
-
-    # 1. Получаем ОДОБРЕННЫЕ примеры
     good_examples = db.get_examples_by_status(prompt_name, status='approved', limit=10)
     good_examples_string = ""
     if good_examples:
-        example_texts = []
-        for ex in good_examples:
-            if ex.get('original_message_text') and ex.get('ai_generated_text'):
-                example_texts.append(
-                    f"Исходное сообщение: {ex['original_message_text']}\nТвой удачный ответ: {ex['ai_generated_text']}"
-                )
+        example_texts = [f"Исходное сообщение: {ex['original_message_text']}\nТвой удачный ответ: {ex['ai_generated_text']}" for ex in good_examples if ex.get('original_message_text') and ex.get('ai_generated_text')]
         if example_texts:
-            heading = "Вот несколько свежих примеров твоих удачных ответов в этой роли. Изучи их, чтобы сохранить свой стиль:\n"
-            good_examples_string = heading + "\n---\n".join(example_texts)
+            good_examples_string = "Вот несколько свежих примеров твоих удачных ответов в этой роли. Изучи их, чтобы сохранить свой стиль:\n" + "\n---\n".join(example_texts)
 
-    # 2. Получаем ОТКЛОНЕННЫЕ примеры
     bad_examples = db.get_examples_by_status(prompt_name, status='declined', limit=10)
     bad_examples_string = ""
     if bad_examples:
-        example_texts = []
-        for ex in bad_examples:
-            if ex.get('original_message_text') and ex.get('ai_generated_text'):
-                example_texts.append(
-                    f"Исходное сообщение: {ex['original_message_text']}\nТвой НЕУДАЧНЫЙ ответ: {ex['ai_generated_text']}"
-                )
+        example_texts = [f"Исходное сообщение: {ex['original_message_text']}\nТвой НЕУДАЧНЫЙ ответ: {ex['ai_generated_text']}" for ex in bad_examples if ex.get('original_message_text') and ex.get('ai_generated_text')]
         if example_texts:
-            heading = "\nА вот так делать НЕ НАДО. Это примеры твоих недавних неудачных ответов, которые были отклонены. Изучи их, чтобы не повторять ошибок:\n"
-            bad_examples_string = heading + "\n---\n".join(example_texts)
+            bad_examples_string = "\nА вот так делать НЕ НАДО. Это примеры твоих недавних неудачных ответов, которые были отклонены. Изучи их, чтобы не повторять ошибок:\n" + "\n---\n".join(example_texts)
 
     # --- СБОРКА ФИНАЛЬНОГО ПРОМТА ---
-
-    # 3. Вставляем оба блока примеров в шаблон
     prompt_with_good = prompt_template.replace('{dynamic_examples}', good_examples_string)
     prompt_with_bad = prompt_with_good.replace('{bad_examples}', bad_examples_string)
 
-    # 4. Готовим JSON с текущим сообщением и вставляем его
-    message_data_for_prompt = {"id": message.id, "text": message.text.strip()}
-    message_json_string = json.dumps(message_data_for_prompt, ensure_ascii=False)
-    full_prompt = prompt_with_bad.replace('{message_json}', message_json_string)
-
-    # --- ВЫЗОВ AI И ОБРАБОТКА ОТВЕТА (без изменений) ---
+    # Форматируем историю переписки в JSON
+    history_for_prompt = []
+    for msg in conversation_history:
+        history_for_prompt.append({
+            "id": msg.id,
+            "author": "me" if msg.sender_id == my_id else "user",
+            "text": msg.text.strip() if msg.text else ""
+        })
+    
+    history_json_string = json.dumps(history_for_prompt, ensure_ascii=False, indent=4)
+    full_prompt = prompt_with_bad.replace('{conversation_history_json}', history_json_string)
+    
+    # --- ВЫЗОВ AI И ОБРАБОТКА ОТВЕТА ---
     try:
         response = await gemini_pro_model.generate_content_async(full_prompt)
         print("\n--- 📥 Ответ от Gemini Pro ---\n", response.text, "\n--------------------------\n")
@@ -112,13 +101,16 @@ async def generate_final_reply(message, persona: str, chat_id: int):
             return None
 
         action = ai_actions[0]
+        
+        # Важно: текст оригинального сообщения теперь - это текст ПОСЛЕДНЕГО сообщения в треде
+        original_message_text = conversation_history[-1].text if conversation_history else ""
 
         action.update({
             'target_chat_id': chat_id,
             'action_type': 'reply',
             'model_version': config.GEMINI_PRO_MODEL_NAME,
             'prompt_version': prompt_name,
-            'original_message_text': message.text
+            'original_message_text': original_message_text
         })
         return action
 
