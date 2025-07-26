@@ -1,4 +1,5 @@
 from supabase import create_client, Client
+from datetime import date
 from . import config
 
 try:
@@ -126,3 +127,27 @@ def is_agent_active():
 	except Exception as e:
 		print(f"❌ Ошибка при проверке статуса агента: {e}")
 		return False
+
+def get_last_initialization_date():
+    """Получает дату последней инициализации агента."""
+    print("🔄 Проверка даты последней инициализации...")
+    try:
+        response = supabase.table('agent_status').select("last_initialization_date").eq('id', 1).single().execute()
+        if response.data and response.data.get('last_initialization_date'):
+            # Преобразуем строку 'YYYY-MM-DD' в объект date
+            return date.fromisoformat(response.data['last_initialization_date'])
+        print("ℹ️ Дата инициализации не найдена.")
+        return None
+    except Exception as e:
+        print(f"❌ Ошибка при получении даты инициализации: {e}")
+        return None
+
+def update_initialization_date():
+    """Обновляет дату инициализации на сегодня."""
+    today_str = date.today().isoformat()
+    print(f"🔄 Обновление даты инициализации на {today_str}...")
+    try:
+        supabase.table('agent_status').update({'last_initialization_date': today_str}).eq('id', 1).execute()
+        print("✅ Дата инициализации успешно обновлена.")
+    except Exception as e:
+        print(f"❌ Ошибка при обновлении даты инициализации: {e}")
