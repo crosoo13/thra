@@ -3,7 +3,8 @@ from . import database_manager as db
 from . import ai_processor
 from . import approval_service
 
-async def process_chat(client, chat_info, prompt_template, prompt_name, my_id):
+# --- ИЗМЕНЕНИЕ: Добавляем 'keyword_triggers' в аргументы функции ---
+async def process_chat(client, chat_info, prompt_template, prompt_name, my_id, keyword_triggers):
     """
     Финальная версия цикла обработки одного чата со сбором контекста
     и строгим правилом "один ответ на один запуск".
@@ -12,8 +13,8 @@ async def process_chat(client, chat_info, prompt_template, prompt_name, my_id):
     chat_type = chat_info.get('chat_type', 'group')
     processing_id = original_chat_id
 
-    # Загружаем ключевые слова из БД
-    keyword_triggers = db.get_keyword_triggers()
+    # --- ИЗМЕНЕНИЕ: УДАЛЯЕМ эту строку отсюда ---
+    # keyword_triggers = db.get_keyword_triggers() 
 
     try:
         print(f"\n▶️ Обработка чата: {original_chat_id} (тип: {chat_type})")
@@ -90,11 +91,9 @@ async def process_chat(client, chat_info, prompt_template, prompt_name, my_id):
                 if target_message and persona:
                     print(f"  🔄 Сбор контекста для сообщения {target_message.id}...")
                     conversation_history = []
-                    # Собираем 5 сообщений до целевого + само целевое сообщение
                     async for msg in client.iter_messages(entity, limit=6, offset_id=target_message.id + 1):
                         conversation_history.append(msg)
                     
-                    # Переворачиваем, чтобы сообщения шли в хронологическом порядке
                     conversation_history.reverse()
                     
                     print(f"  ✅ Собран контекст из {len(conversation_history)} сообщений.")

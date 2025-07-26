@@ -26,7 +26,6 @@ async def initialize_first_run_of_day(client):
         try:
             entity = await client.get_entity(chat_id)
             
-            # Если это канал с комментариями, ID для чтения и записи будет другим
             if hasattr(entity, 'linked_chat_id') and entity.linked_chat_id:
                 processing_id = entity.linked_chat_id
                 print(f"  ✅ Канал {chat_id} связан с чатом для комментариев {processing_id}.")
@@ -34,19 +33,15 @@ async def initialize_first_run_of_day(client):
             else:
                 entity_to_read = entity
 
-            # Получаем самое последнее сообщение в чате
-            # client.iter_messages возвращает в обратном хронологическом порядке,
-            # поэтому первое сообщение в итераторе - самое новое.
             async for last_message in client.iter_messages(entity_to_read, limit=1):
                 db.update_last_message_id(processing_id, last_message.id)
-                break # Нам нужно только одно сообщение
+                break 
             else:
                  print(f"   ⚠️ В чате {processing_id} нет сообщений, пропускаем.")
 
         except Exception as e:
             print(f"   ❌ Ошибка при инициализации чата {chat_id}: {e}")
 
-    # После успешной инициализации всех чатов обновляем дату в БД
     db.update_initialization_date()
     print("\n--- ✅ Инициализация на сегодня завершена ---")
 
@@ -55,7 +50,6 @@ async def main():
     if not db.is_agent_active():
         return
     
-    # --- НОВАЯ ЛОГИКА ПРОВЕРКИ ДАТЫ ---
     last_init_date = db.get_last_initialization_date()
     today = date.today()
 
@@ -68,10 +62,8 @@ async def main():
         async with TelegramClient(StringSession(session_string), config.TELEGRAM_API_ID, config.TELEGRAM_API_HASH) as client:
             if last_init_date is None or last_init_date < today:
                 await initialize_first_run_of_day(client)
-                # Завершаем работу после инициализации
                 return
 
-            # --- СТАРЫЙ КОД (ЗАПУСКАЕТСЯ, ЕСЛИ ИНИЦИАЛИЗАЦИЯ СЕГОДНЯ УЖЕ БЫЛА) ---
             print("\n--- ✨ ЗАПУСК HR VISION AGENT (РАБОЧИЙ РЕЖИМ) ✨ ---\n")
             
             prompt_name = "hr_assistant_prompt"
@@ -94,9 +86,13 @@ async def main():
                 print("ℹ️ Целевые чаты для обработки не найдены.")
                 return
 
+            # --- ИЗМЕНЕНИЕ: Загружаем ключевые слова ОДИН РАЗ ---
+            keyword_triggers = db.get_keyword_triggers()
+
             print("\n--- 🚀 Начало обработки чатов ---")
             for chat_info in target_chats:
-                await telegram_processor.process_chat(client, chat_info, prompt_template, prompt_name, my_id)
+                # --- ИЗМЕНЕНИЕ: Передаем список как аргумент ---
+                await telegram_processor.process_chat(client, chat_info, prompt_template, prompt_name, my_id, keyword_triggers)
             
             print("\n--- ✅ Все чаты обработаны ---\n")
 
