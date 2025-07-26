@@ -1,9 +1,9 @@
 name: Run HR Vision Agent
 
 on:
-#  schedule:
-#    # Запуск каждые 15 минут, с 9:00 до 16:00 по МСК (что равно 6:00-13:00 UTC)
-#    - cron: '*/15 6-13 * * *'
+  schedule:
+    # Запуск каждые 5 минут, с 8:00 до 17:00 по МСК (что равно 5:00-14:00 UTC)
+    - cron: '*/5 5-14 * * *'
   
   # Позволяет запускать этот воркфлоу вручную со страницы Actions
   workflow_dispatch:
@@ -24,9 +24,7 @@ jobs:
     - name: 3. Cache pip packages
       uses: actions/cache@v4
       with:
-        # Путь, который будет кешироваться
         path: ~/.cache/pip
-        # Ключ для кеша: если requirements.txt не изменился, кеш будет восстановлен
         key: ${{ runner.os }}-python-${{ hashFiles('**/requirements.txt') }}
         restore-keys: |
           ${{ runner.os }}-python-
