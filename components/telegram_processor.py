@@ -1,5 +1,3 @@
-# telegram_processor.py
-
 from datetime import datetime, timezone
 from . import database_manager as db
 from . import ai_processor
@@ -13,6 +11,9 @@ async def process_chat(client, chat_info, prompt_template, prompt_name, my_id):
     original_chat_id = chat_info['chat_id']
     chat_type = chat_info.get('chat_type', 'group')
     processing_id = original_chat_id
+
+    # Загружаем ключевые слова из БД
+    keyword_triggers = db.get_keyword_triggers()
 
     try:
         print(f"\n▶️ Обработка чата: {original_chat_id} (тип: {chat_type})")
@@ -52,18 +53,21 @@ async def process_chat(client, chat_info, prompt_template, prompt_name, my_id):
 
         print(f"  📩 Найдено {len(messages_to_process)} новых сообщений.")
         
-        KEYWORD_TRIGGERS = ["массовый", "массового", "вахтой", "вахтовым"]
-        print("  🔍 Проверка сообщений на ключевые слова...")
-        for message in messages_to_process:
-            if message.text and any(keyword in message.text.lower() for keyword in KEYWORD_TRIGGERS):
-                print(f"  🚨 Найдено ключевое слово в сообщении {message.id} из чата {processing_id}!")
-                alert_payload = {
-                    'action_type': 'keyword_alert',
-                    'target_chat_id': processing_id,
-                    'original_message_text': message.text,
-                    'reply_to_message_id': message.id
-                }
-                approval_service.send_action_for_approval(alert_payload)
+        if keyword_triggers:
+            print("  🔍 Проверка сообщений на ключевые слова...")
+            for message in messages_to_process:
+                if message.text and any(keyword.lower() in message.text.lower() for keyword in keyword_triggers):
+                    print(f"  🚨 Найдено ключевое слово в сообщении {message.id} из чата {processing_id}!")
+                    alert_payload = {
+                        'action_type': 'keyword_alert',
+                        'target_chat_id': processing_id,
+                        'original_message_text': message.text,
+                        'reply_to_message_id': message.id
+                    }
+                    approval_service.send_action_for_approval(alert_payload)
+        else:
+            print("  ℹ️ Список ключевых слов пуст, проверка пропускается.")
+
 
         print("  🤖 Запуск AI-конвейера...")
         routing_decisions = await ai_processor.get_routing_decisions(messages_to_process)
