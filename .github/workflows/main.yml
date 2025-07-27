@@ -1,11 +1,12 @@
 name: Run HR Vision Agent
 
 on:
-  schedule:
-    # Запуск каждые 5 минут, с 8:00 до 17:00 по МСК (что равно 5:00-14:00 UTC)
-    - cron: '*/5 5-14 * * *'
+  # Встроенный планировщик GitHub отключен, чтобы избежать двойного запуска.
+  # schedule:
+  #   # Запуск каждые 5 минут, с 8:00 до 17:00 по МСК (что равно 5:00-14:00 UTC)
+  #   - cron: '*/5 5-14 * * *'
   
-  # Позволяет запускать этот воркфлоу вручную со страницы Actions
+  # Позволяет запускать этот воркфлоу вручную и через внешние сервисы (API)
   workflow_dispatch:
 
 jobs:
@@ -26,9 +27,9 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~/.local
-        key: ${{ runner.os }}-python-${{ matrix.python-version }}-${{ hashFiles('**/requirements.txt') }}
+        key: ${{ runner.os }}-python-3.10-${{ hashFiles('**/requirements.txt') }}
         restore-keys: |
-          ${{ runner.os }}-python-${{ matrix.python-version }}-
+          ${{ runner.os }}-python-3.10-
 
     - name: 4. Install dependencies if cache not found
       if: steps.pip-cache.outputs.cache-hit != 'true'
@@ -39,7 +40,6 @@ jobs:
     - name: 5. Add user bin to PATH and run script
       run: |
         echo "$HOME/.local/bin" >> $GITHUB_PATH
-        # ИЗМЕНЕНИЕ ЗДЕСЬ: добавлен флаг -u
         python -u main.py
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
