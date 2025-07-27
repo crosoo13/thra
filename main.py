@@ -3,15 +3,17 @@ from datetime import date
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 
+# --- Компоненты системы ---
 from components import config
 from components import database_manager as db
 from components import telegram_processor
 from components import sender_service
+# Новый сервис для поиска лидов будет импортирован позже, прямо перед использованием
 
 async def initialize_first_run_of_day(client):
     """
     Выполняет первую инициализацию для нового дня.
-    Просто обновляет last_message_id на ID последнего сообщения в чате.
+    (Этот код остался без изменений)
     """
     print("\n--- 🌅 ПЕРВЫЙ ЗАПУСК ДНЯ: РЕЖИМ ИНИЦИАЛИЗАЦИИ ---\n")
     target_chats = db.get_target_chats()
@@ -21,7 +23,7 @@ async def initialize_first_run_of_day(client):
 
     for chat_info in target_chats:
         chat_id = chat_info['chat_id']
-        processing_id = chat_id # ID для записи в channel_state
+        processing_id = chat_id
         print(f"▶️ Инициализация чата: {chat_id}")
         try:
             entity = await client.get_entity(chat_id)
@@ -37,10 +39,10 @@ async def initialize_first_run_of_day(client):
                 db.update_last_message_id(processing_id, last_message.id)
                 break 
             else:
-                 print(f"   ⚠️ В чате {processing_id} нет сообщений, пропускаем.")
+                print(f"  ⚠️ В чате {processing_id} нет сообщений, пропускаем.")
 
         except Exception as e:
-            print(f"   ❌ Ошибка при инициализации чата {chat_id}: {e}")
+            print(f"  ❌ Ошибка при инициализации чата {chat_id}: {e}")
 
     db.update_initialization_date()
     print("\n--- ✅ Инициализация на сегодня завершена ---")
@@ -66,11 +68,6 @@ async def main():
 
             print("\n--- ✨ ЗАПУСК HR VISION AGENT (РАБОЧИЙ РЕЖИМ) ✨ ---\n")
             
-            prompt_name = "hr_assistant_prompt"
-            prompt_template = db.get_prompt_template(prompt_name)
-            if not prompt_template:
-                return
-
             if not await client.is_user_authorized():
                 print("❌ Пользователь не авторизован. Пожалуйста, запустите скрипт для создания сессии.")
                 return
@@ -79,6 +76,7 @@ async def main():
             my_id = me.id
             print(f"✅ Скрипт запущен от имени: {me.first_name} (ID: {my_id})")
 
+            # Сначала отправляем все сообщения, ожидающие в очереди
             await sender_service.send_pending_messages(client)
             
             target_chats = db.get_target_chats()
@@ -86,15 +84,42 @@ async def main():
                 print("ℹ️ Целевые чаты для обработки не найдены.")
                 return
 
-            # --- ИЗМЕНЕНИЕ: Загружаем ключевые слова ОДИН РАЗ ---
+            # Загружаем ключевые слова ОДИН РАЗ
             keyword_triggers = db.get_keyword_triggers()
 
-            print("\n--- 🚀 Начало обработки чатов ---")
-            for chat_info in target_chats:
-                # --- ИЗМЕНЕНИЕ: Передаем список как аргумент ---
-                await telegram_processor.process_chat(client, chat_info, prompt_template, prompt_name, my_id, keyword_triggers)
+            # --- ГИБРИДНЫЙ ПОДХОД К ОБРАБОТКЕ ---
+
+            # 1. Готовим пустой список для сбора ВСЕХ сообщений для "Охотника за лидами"
+            all_messages_for_lead_hunter = []
             
-            print("\n--- ✅ Все чаты обработаны ---\n")
+            print("\n--- 🚀 Начало последовательной обработки чатов (Агент влияния) ---")
+            for chat_info in target_chats:
+                # 2. Обрабатываем каждый чат старой логикой. 
+                # Функция теперь возвращает сообщения, которые она обработала.
+                processed_messages = await telegram_processor.process_chat_for_engagement(
+                    client, chat_info, my_id, keyword_triggers
+                )
+                
+                # 3. Добавляем обработанные сообщения в общий список для "Охотника"
+                if processed_messages:
+                    all_messages_for_lead_hunter.extend(processed_messages)
+            
+            print("\n--- ✅ Все чаты обработаны 'Агентом влияния' ---")
+
+            # 4. ПОСЛЕ цикла, запускаем новую логику ("Охотник за лидами") на всех собранных сообщениях
+            if all_messages_for_lead_hunter:
+                print("\n--- 🕵️‍♂️ Запуск 'Охотника за лидами' по всем собранным сообщениям ---")
+                
+                # Импортируем новый сервис прямо здесь, чтобы избежать циклических зависимостей
+                # и сохранить код чистым.
+                from components import lead_hunter_service 
+                await lead_hunter_service.find_and_process_leads(client, all_messages_for_lead_hunter)
+                
+                print("\n--- ✅ Поиск лидов завершен ---")
+            else:
+                print("\n--- ℹ️ Новых сообщений для поиска лидов не найдено ---")
+
+            print("\n--- 🏁 Работа агента на этот запуск завершена ---\n")
 
     except Exception as e:
         print(f"❌ Критическая ошибка в main: {e}")

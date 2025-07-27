@@ -3,23 +3,22 @@ from . import database_manager as db
 from . import ai_processor
 from . import approval_service
 
-# --- ИЗМЕНЕНИЕ: Добавляем 'keyword_triggers' в аргументы функции ---
-async def process_chat(client, chat_info, prompt_template, prompt_name, my_id, keyword_triggers):
+async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers):
     """
-    Финальная версия цикла обработки одного чата со сбором контекста
-    и строгим правилом "один ответ на один запуск".
+    ОБНОВЛЕННАЯ ВЕРСИЯ:
+    Обрабатывает ОДИН чат для публичного вовлечения ("Агент влияния").
+    Логика полностью сохранена.
+    В конце возвращает список новых сообщений для дальнейшей обработки.
     """
     original_chat_id = chat_info['chat_id']
     chat_type = chat_info.get('chat_type', 'group')
     processing_id = original_chat_id
 
-    # --- ИЗМЕНЕНИЕ: УДАЛЯЕМ эту строку отсюда ---
-    # keyword_triggers = db.get_keyword_triggers() 
-
     try:
-        print(f"\n▶️ Обработка чата: {original_chat_id} (тип: {chat_type})")
+        print(f"\n▶️  Обработка чата (Агент влияния): {original_chat_id} (тип: {chat_type})")
         entity = await client.get_entity(original_chat_id)
 
+        # Логика для каналов и связанных с ними чатов комментариев
         if chat_type == 'channel':
             if hasattr(entity, 'linked_chat_id') and entity.linked_chat_id:
                 processing_id = entity.linked_chat_id
@@ -27,8 +26,9 @@ async def process_chat(client, chat_info, prompt_template, prompt_name, my_id, k
                 print(f"  ✅ Найден связанный чат для комментариев: {processing_id}")
             else:
                 print(f"  ⚠️ Для канала {original_chat_id} комментарии отключены. Пропускаем.")
-                return
+                return None
 
+        # Получение новых сообщений
         last_id = db.get_last_message_id(processing_id)
         today_start_utc = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         
@@ -49,16 +49,19 @@ async def process_chat(client, chat_info, prompt_template, prompt_name, my_id, k
                     newest_message_id = message.id
 
         if not messages_to_process:
-            print("  ✅ Новых сообщений для обработки сегодня нет.")
-            return
+            print("  ✅ Новых сообщений для публичного ответа нет.")
+            return None # <-- ВАЖНО: возвращаем None, если нет сообщений
 
-        print(f"  📩 Найдено {len(messages_to_process)} новых сообщений.")
+        print(f"  📩 Найдено {len(messages_to_process)} новых сообщений для анализа.")
         
+        # --- ВСЯ СТАРАЯ ЛОГИКА ОСТАЕТСЯ НЕИЗМЕННОЙ ---
+
+        # 1. Проверка на ключевые слова
         if keyword_triggers:
             print("  🔍 Проверка сообщений на ключевые слова...")
             for message in messages_to_process:
                 if message.text and any(keyword.lower() in message.text.lower() for keyword in keyword_triggers):
-                    print(f"  🚨 Найдено ключевое слово в сообщении {message.id} из чата {processing_id}!")
+                    print(f"  🚨 Найдено ключевое слово в сообщении {message.id}!")
                     alert_payload = {
                         'action_type': 'keyword_alert',
                         'target_chat_id': processing_id,
@@ -69,8 +72,8 @@ async def process_chat(client, chat_info, prompt_template, prompt_name, my_id, k
         else:
             print("  ℹ️ Список ключевых слов пуст, проверка пропускается.")
 
-
-        print("  🤖 Запуск AI-конвейера...")
+        # 2. Запуск AI-конвейера для публичного ответа
+        print("  🤖 Запуск AI-конвейера (Агент влияния)...")
         routing_decisions = await ai_processor.get_routing_decisions(messages_to_process)
 
         if routing_decisions:
@@ -91,6 +94,7 @@ async def process_chat(client, chat_info, prompt_template, prompt_name, my_id, k
                 if target_message and persona:
                     print(f"  🔄 Сбор контекста для сообщения {target_message.id}...")
                     conversation_history = []
+                    # Собираем контекст из 6 предыдущих сообщений
                     async for msg in client.iter_messages(entity, limit=6, offset_id=target_message.id + 1):
                         conversation_history.append(msg)
                     
@@ -101,17 +105,23 @@ async def process_chat(client, chat_info, prompt_template, prompt_name, my_id, k
                     final_action = await ai_processor.generate_final_reply(conversation_history, persona, processing_id, my_id)
                     
                     if final_action:
-                        print(f"  🚀 Сгенерирован 1 ответ. Отправка на утверждение...")
+                        print("  🚀 Сгенерирован 1 публичный ответ. Отправка на утверждение...")
                         approval_service.send_action_for_approval(final_action)
                     else:
                         print("  ✅ AI решил ответить, но генератор не создал финальный текст.")
             else:
-                print("  ✅ AI обработал сообщения, но не нашел ни одного подходящего для ответа.")
+                print("  ✅ AI (Агент влияния) не нашел подходящего сообщения для ответа.")
 
+        # Обновляем ID последнего сообщения в базе данных
         if newest_message_id > last_id:
             db.update_last_message_id(processing_id, newest_message_id)
 
+        # --- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ ---
+        # Возвращаем собранные сообщения, чтобы главный скрипт мог их передать "Охотнику за лидами"
+        return messages_to_process
+
     except Exception as e:
         print(f"❌ Произошла критическая ошибка при обработке чата {original_chat_id}: {e}")
+        return None # В случае ошибки также возвращаем None
     finally:
         print("-" * 50)

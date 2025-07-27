@@ -1,5 +1,3 @@
-# ai_processor.py
-
 import json
 import google.generativeai as genai
 from . import config
@@ -14,11 +12,13 @@ except Exception as e:
     print(f"❌ Ошибка инициализации Gemini AI: {e}")
     exit()
 
+# --- СТАРЫЙ ФУНКЦИОНАЛ ("АГЕНТ ВЛИЯНИЯ") - НЕ ТРОНУТ ---
+
 async def get_routing_decisions(messages):
     """
     ЭТАП 1: Вызывает Gemini Flash для принятия решения: ответить или игнорировать.
     """
-    print("  🤖 Этап 1: Отправка сообщений на сортировку в Gemini Flash...")
+    print("  🤖 Этап 1 (Агент влияния): Отправка сообщений на сортировку...")
     prompt_template = db.get_prompt_template("router_prompt")
     if not prompt_template:
         print("    ❌ Не найден 'router_prompt' в базе данных!")
@@ -39,10 +39,10 @@ async def get_routing_decisions(messages):
         response = await gemini_flash_model.generate_content_async(full_prompt)
         cleaned_response_text = response.text.strip().removeprefix('```json').removesuffix('```')
         decisions = json.loads(cleaned_response_text)
-        print(f"    ✅ Сортировщик принял {len(decisions)} решений.")
+        print(f"    ✅ Сортировщик (Агент влияния) принял {len(decisions)} решений.")
         return decisions
     except Exception as e:
-        print(f"    ❌ Критическая ошибка на этапе сортировки: {e}")
+        print(f"    ❌ Критическая ошибка на этапе сортировки (Агент влияния): {e}")
         return []
 
 async def generate_final_reply(conversation_history, persona: str, chat_id: int, my_id: int):
@@ -50,7 +50,7 @@ async def generate_final_reply(conversation_history, persona: str, chat_id: int,
     ЭТАП 2: Вызывает Gemini Pro для генерации ответа, используя контекст переписки.
     """
     prompt_name = f"{persona.lower()}_prompt"
-    print(f"  🤖 Этап 2: Генерация ответа с личностью '{persona}' (промпт: '{prompt_name}')...")
+    print(f"  🤖 Этап 2 (Агент влияния): Генерация ответа с личностью '{persona}'...")
 
     prompt_template = db.get_prompt_template(prompt_name)
     if not prompt_template:
@@ -76,7 +76,6 @@ async def generate_final_reply(conversation_history, persona: str, chat_id: int,
     prompt_with_good = prompt_template.replace('{dynamic_examples}', good_examples_string)
     prompt_with_bad = prompt_with_good.replace('{bad_examples}', bad_examples_string)
 
-    # Форматируем историю переписки в JSON
     history_for_prompt = []
     for msg in conversation_history:
         history_for_prompt.append({
@@ -88,21 +87,17 @@ async def generate_final_reply(conversation_history, persona: str, chat_id: int,
     history_json_string = json.dumps(history_for_prompt, ensure_ascii=False, indent=4)
     full_prompt = prompt_with_bad.replace('{conversation_history_json}', history_json_string)
     
-    # --- ВЫЗОВ AI И ОБРАБОТКА ОТВЕТА ---
     try:
         response = await gemini_pro_model.generate_content_async(full_prompt)
-        print("\n--- 📥 Ответ от Gemini Pro ---\n", response.text, "\n--------------------------\n")
-
+        
         cleaned_response_text = response.text.strip().removeprefix('```json').removesuffix('```')
         ai_actions = json.loads(cleaned_response_text)
 
         if not ai_actions:
-            print(f"    ℹ️ Персона '{persona}' решила не отвечать на это сообщение.")
             return None
 
         action = ai_actions[0]
         
-        # Важно: текст оригинального сообщения теперь - это текст ПОСЛЕДНЕГО сообщения в треде
         original_message_text = conversation_history[-1].text if conversation_history else ""
 
         action.update({
@@ -115,8 +110,74 @@ async def generate_final_reply(conversation_history, persona: str, chat_id: int,
         return action
 
     except json.JSONDecodeError:
-        print(f"    ❌ Ошибка: Gemini Pro вернул невалидный JSON. Ответ залогирован выше.")
+        print(f"    ❌ Ошибка (Агент влияния): Gemini Pro вернул невалидный JSON.")
         return None
     except Exception as e:
-        print(f"    ❌ Критическая ошибка на этапе генерации ответа: {e}")
+        print(f"    ❌ Критическая ошибка на этапе генерации ответа (Агент влияния): {e}")
+        return None
+
+# --- НОВЫЙ ФУНКЦИОНАЛ ("ОХОТНИК ЗА ЛИДАМИ") ---
+
+async def get_lead_decisions(messages):
+    """
+    ЭТАП 1 (Охотник): Вызывает Gemini Flash для КЛАССИФИКАЦИИ лидов.
+    """
+    print("  🕵️‍♂️ Этап 1 (Охотник): Отправка сообщений на классификацию лидов...")
+    prompt_template = db.get_prompt_template("lead_finder_prompt")
+    if not prompt_template:
+        print("    ❌ Не найден 'lead_finder_prompt' в базе данных!")
+        return []
+
+    messages_for_prompt = [
+        {"message_id": msg.id, "text": msg.text.strip()}
+        for msg in messages if msg.text and not msg.text.isspace()
+    ]
+
+    if not messages_for_prompt:
+        return []
+
+    messages_json = json.dumps(messages_for_prompt, ensure_ascii=False, indent=4)
+    full_prompt = prompt_template.replace('{messages_for_prompt}', messages_json)
+
+    try:
+        response = await gemini_flash_model.generate_content_async(full_prompt)
+        cleaned_response_text = response.text.strip().removeprefix('```json').removesuffix('```')
+        decisions = json.loads(cleaned_response_text)
+        print(f"    ✅ Классификатор (Охотник) принял {len(decisions)} решений.")
+        return decisions
+    except Exception as e:
+        print(f"    ❌ Критическая ошибка на этапе классификации лидов (Охотник): {e}")
+        return []
+
+async def generate_lead_outreach_message(target_message):
+    """
+    ЭТАП 2 (Охотник): Вызывает Gemini Pro для ГЕНЕРАЦИИ персонального сообщения лиду.
+    """
+    print(f"  🕵️‍♂️ Этап 2 (Охотник): Генерация персонального сообщения для лида...")
+    prompt_template = db.get_prompt_template("lead_outreach_prompt")
+    if not prompt_template:
+        print("    ❌ Не найден 'lead_outreach_prompt' в базе данных!")
+        return None
+    
+    # Формируем информацию о лиде для промпта
+    lead_message_info = {
+        "Имя": target_message.sender.first_name,
+        "Сообщение": target_message.text.strip()
+    }
+    lead_message_json = json.dumps(lead_message_info, ensure_ascii=False, indent=4)
+    
+    full_prompt = prompt_template.replace('{lead_message_json}', lead_message_json)
+
+    try:
+        response = await gemini_pro_model.generate_content_async(full_prompt)
+        cleaned_response_text = response.text.strip().removeprefix('```json').removesuffix('```')
+        action = json.loads(cleaned_response_text)
+        print(f"    ✅ Сгенерирован текст для лида: {target_message.sender.first_name}")
+        return action
+
+    except json.JSONDecodeError:
+        print(f"    ❌ Ошибка (Охотник): Gemini Pro вернул невалидный JSON.")
+        return None
+    except Exception as e:
+        print(f"    ❌ Критическая ошибка на этапе генерации сообщения лиду (Охотник): {e}")
         return None
