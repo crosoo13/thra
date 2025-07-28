@@ -7,8 +7,7 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
     """
     ОБНОВЛЕННАЯ ВЕРСИЯ:
     Обрабатывает ОДИН чат для публичного вовлечения ("Агент влияния").
-    Логика полностью сохранена.
-    В конце возвращает список новых сообщений для дальнейшей обработки.
+    Добавлена проверка на часовой лимит и ограничение на анализ последних 10 сообщений.
     """
     original_chat_id = chat_info['chat_id']
     chat_type = chat_info.get('chat_type', 'group')
@@ -17,17 +16,15 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
     try:
         print(f"\n▶️  Обработка чата (Агент влияния): {original_chat_id} (тип: {chat_type})")
 
-        # --- НОВЫЙ БЛОК: ПРОВЕРКА ЧАСОВОГО ЛИМИТА ---
+        # --- ПРОВЕРКА ЧАСОВОГО ЛИМИТА ---
         last_post_time = db.get_last_post_time(processing_id)
         if last_post_time:
-            # Сравниваем время с учетом таймзон
             time_since_last_post = datetime.now(timezone.utc) - last_post_time
             if time_since_last_post < timedelta(hours=1):
                 print(f"  ⏳ Часовой лимит для чата {processing_id} еще не истек. Пропускаем.")
                 print("-" * 50)
-                return None # Прерываем обработку этого чата
-        # --- КОНЕЦ НОВОГО БЛОКА ---
-
+                return None
+        
         entity = await client.get_entity(original_chat_id)
 
         # Логика для каналов и связанных с ними чатов комментариев
@@ -62,13 +59,19 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
 
         if not messages_to_process:
             print("  ✅ Новых сообщений для публичного ответа нет.")
-            return None # <-- ВАЖНО: возвращаем None, если нет сообщений
+            return None
 
         print(f"  📩 Найдено {len(messages_to_process)} новых сообщений для анализа.")
         
-        # --- ВСЯ СТАРАЯ ЛОГИКА ОСТАЕТСЯ НЕИЗМЕННОЙ ---
+        # --- НОВЫЙ БЛОК: ОГРАНИЧЕНИЕ КОЛИЧЕСТВА СООБЩЕНИЙ ДЛЯ АНАЛИЗА ---
+        if len(messages_to_process) > 10:
+            print(f"  ✂️ Сообщений слишком много. Для анализа будут взяты только последние 10.")
+            messages_for_ai_analysis = messages_to_process[-10:]
+        else:
+            messages_for_ai_analysis = messages_to_process
+        # --- КОНЕЦ НОВОГО БЛОКА ---
 
-        # 1. Проверка на ключевые слова
+        # 1. Проверка на ключевые слова (проверяем все сообщения, а не только последние 10)
         if keyword_triggers:
             print("  🔍 Проверка сообщений на ключевые слова...")
             for message in messages_to_process:
@@ -84,9 +87,9 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
         else:
             print("  ℹ️ Список ключевых слов пуст, проверка пропускается.")
 
-        # 2. Запуск AI-конвейера для публичного ответа
+        # 2. Запуск AI-конвейера для публичного ответа (используем ограниченный список)
         print("  🤖 Запуск AI-конвейера (Агент влияния)...")
-        routing_decisions = await ai_processor.get_routing_decisions(messages_to_process)
+        routing_decisions = await ai_processor.get_routing_decisions(messages_for_ai_analysis)
 
         if routing_decisions:
             decisions_to_reply = [d for d in routing_decisions if d.get('decision') == 'reply']
@@ -100,13 +103,13 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
             if final_decision:
                 message_id_to_reply = final_decision.get('message_id')
                 persona = final_decision.get('persona')
+                # Важно: ищем сообщение в полном списке, чтобы получить правильный объект
                 message_map = {msg.id: msg for msg in messages_to_process}
                 target_message = message_map.get(message_id_to_reply)
 
                 if target_message and persona:
                     print(f"  🔄 Сбор контекста для сообщения {target_message.id}...")
                     conversation_history = []
-                    # Собираем контекст из 6 предыдущих сообщений
                     async for msg in client.iter_messages(entity, limit=6, offset_id=target_message.id + 1):
                         conversation_history.append(msg)
                     
@@ -124,16 +127,15 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
             else:
                 print("  ✅ AI (Агент влияния) не нашел подходящего сообщения для ответа.")
 
-        # Обновляем ID последнего сообщения в базе данных
+        # Обновляем ID последнего сообщения в базе данных (используя ID из полного списка)
         if newest_message_id > last_id:
             db.update_last_message_id(processing_id, newest_message_id)
 
-        # --- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ ---
-        # Возвращаем собранные сообщения, чтобы главный скрипт мог их передать "Охотнику за лидами"
+        # Возвращаем полный список собранных сообщений для "Охотника за лидами"
         return messages_to_process
 
     except Exception as e:
         print(f"❌ Произошла критическая ошибка при обработке чата {original_chat_id}: {e}")
-        return None # В случае ошибки также возвращаем None
+        return None
     finally:
         print("-" * 50)
