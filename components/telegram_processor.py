@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from . import database_manager as db
 from . import ai_processor
 from . import approval_service
@@ -16,6 +16,18 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
 
     try:
         print(f"\n▶️  Обработка чата (Агент влияния): {original_chat_id} (тип: {chat_type})")
+
+        # --- НОВЫЙ БЛОК: ПРОВЕРКА ЧАСОВОГО ЛИМИТА ---
+        last_post_time = db.get_last_post_time(processing_id)
+        if last_post_time:
+            # Сравниваем время с учетом таймзон
+            time_since_last_post = datetime.now(timezone.utc) - last_post_time
+            if time_since_last_post < timedelta(hours=1):
+                print(f"  ⏳ Часовой лимит для чата {processing_id} еще не истек. Пропускаем.")
+                print("-" * 50)
+                return None # Прерываем обработку этого чата
+        # --- КОНЕЦ НОВОГО БЛОКА ---
+
         entity = await client.get_entity(original_chat_id)
 
         # Логика для каналов и связанных с ними чатов комментариев
