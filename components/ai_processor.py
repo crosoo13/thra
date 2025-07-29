@@ -1,3 +1,5 @@
+# components/ai_processor.py
+
 import json
 import google.generativeai as genai
 from . import config
@@ -12,7 +14,7 @@ except Exception as e:
     print(f"❌ Ошибка инициализации Gemini AI: {e}")
     exit()
 
-# --- СТАРЫЙ ФУНКЦИОНАЛ ("АГЕНТ ВЛИЯНИЯ") - НЕ ТРОНУТ ---
+# --- ФУНКЦИОНАЛ "АГЕНТ ВЛИЯНИЯ" ---
 
 async def get_routing_decisions(messages):
     """
@@ -44,6 +46,7 @@ async def get_routing_decisions(messages):
     except Exception as e:
         print(f"    ❌ Критическая ошибка на этапе сортировки (Агент влияния): {e}")
         return []
+
 
 async def generate_final_reply(conversation_history, persona: str, chat_id: int, my_id: int):
     """
@@ -98,10 +101,16 @@ async def generate_final_reply(conversation_history, persona: str, chat_id: int,
 
         action = ai_actions[0]
         
-        original_message_text = conversation_history[-1].text if conversation_history else ""
+        # --- ИСПРАВЛЕННЫЙ БЛОК ---
+        # Извлекаем данные из последнего сообщения в истории
+        original_message = conversation_history[-1] if conversation_history else None
+        original_message_text = original_message.text if original_message else ""
+        target_user_id = original_message.sender_id if original_message else None
 
+        # Добавляем все необходимые данные в итоговый объект
         action.update({
             'target_chat_id': chat_id,
+            'target_user_id': target_user_id, # <-- Вот это исправление
             'action_type': 'reply',
             'model_version': config.GEMINI_PRO_MODEL_NAME,
             'prompt_version': prompt_name,
@@ -116,7 +125,8 @@ async def generate_final_reply(conversation_history, persona: str, chat_id: int,
         print(f"    ❌ Критическая ошибка на этапе генерации ответа (Агент влияния): {e}")
         return None
 
-# --- НОВЫЙ ФУНКЦИОНАЛ ("ОХОТНИК ЗА ЛИДАМИ") ---
+
+# --- ФУНКЦИОНАЛ "ОХОТНИК ЗА ЛИДАМИ" ---
 
 async def get_lead_decisions(messages):
     """
@@ -148,6 +158,7 @@ async def get_lead_decisions(messages):
     except Exception as e:
         print(f"    ❌ Критическая ошибка на этапе классификации лидов (Охотник): {e}")
         return []
+
 
 async def generate_lead_outreach_message(target_message):
     """

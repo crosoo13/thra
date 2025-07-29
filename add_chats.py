@@ -17,7 +17,6 @@ SESSION_NAME = "hr_vision_agent_session"
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 
-# Имя файла, из которого читаем ссылки
 INPUT_FILE = "tg.txt"
 
 # --- 2. ИНИЦИАЛИЗАЦИЯ КЛИЕНТОВ ---
@@ -26,6 +25,7 @@ try:
     print("✅ Supabase клиент успешно инициализирован.")
 except Exception as e:
     print(f"❌ Ошибка инициализации Supabase: {e}")
+    exit() # Выходим, если Supabase недоступен
 
 # --- 3. ФУНКЦИИ РАБОТЫ С СЕССИЕЙ ---
 def get_session_from_supabase():
@@ -35,11 +35,11 @@ def get_session_from_supabase():
         if response.data:
             print("✅ Сессия успешно получена из Supabase.")
             return response.data.get('session_file')
-    except Exception:
-        print("INFO: Рабочая сессия не найдена, будет создана новая.")
+    except Exception as e:
+        print(f"INFO: Рабочая сессия не найдена, будет создана новая. Ошибка: {e}")
     return None
 
-# --- 4. ОСНОВНАЯ ЛОГИКА ---
+# --- 4. ОСНОВНАЯ ЛОГИКА С ОТЛАДКОЙ ---
 async def main():
     """Главная функция для добавления чатов в базу данных."""
     print("Запуск скрипта добавления чатов...")
@@ -50,68 +50,84 @@ async def main():
         print("💡 Сначала запустите ваш основной скрипт, чтобы авторизоваться и сохранить сессию в базе.")
         return
 
-    client = TelegramClient(StringSession(session_string), TELEGRAM_API_ID, TELEGRAM_API_HASH)
-    
-    print("Подключение к Telegram...")
-    await client.connect()
-    if not await client.is_user_authorized():
-        print("❌ Пользователь не авторизован. Запустите основной скрипт.")
-        return
-    
-    print("✅ Успешная авторизация в Telegram!")
+    async with TelegramClient(StringSession(session_string), TELEGRAM_API_ID, TELEGRAM_API_HASH) as client:
+        print("✅ Успешная авторизация в Telegram!")
 
-    if not os.path.exists(INPUT_FILE):
-        print(f"❌ Файл {INPUT_FILE} не найден. Создайте его и добавьте ссылки.")
-        return
+        if not os.path.exists(INPUT_FILE):
+            print(f"❌ Файл {INPUT_FILE} не найден. Создайте его и добавьте ссылки.")
+            return
 
-    with open(INPUT_FILE, 'r') as f:
-        for line in f:
-            username = line.strip()
-            if not username:
-                continue
-
-            try:
-                print(f"--- Обработка: {username} ---")
-                entity = await client.get_entity(username)
-                
-                chat_id = entity.id
-                chat_type = None
-
-                # --- НОВОЕ: Логика определения типа (канал или группа) ---
-                if isinstance(entity, Channel):
-                    # Преобразуем ID для каналов и супергрупп
-                    chat_id = int(f"-100{entity.id}")
-                    
-                    # Свойство 'megagroup' равно True для супергрупп (чатов) и False для каналов
-                    if entity.megagroup:
-                        chat_type = 'group'
-                    else:
-                        chat_type = 'channel'
-                else:
-                    # Если это не Channel (например, обычный чат или бот), пропускаем
-                    print(f"🟡 {username} не является каналом или группой. Пропускаем.")
+        with open(INPUT_FILE, 'r') as f:
+            for line in f:
+                username = line.strip()
+                if not username:
                     continue
-                # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
 
-                print(f"✅ Найден ID: {chat_id}")
-                print(f"✅ Тип определён: {chat_type}")
+                print(f"\n--- Обработка: {username} ---")
 
-                # --- ИЗМЕНЕНО: Добавляем 'chat_type' в запись ---
-                print(f"Запись в базу...")
-                supabase.table("target_chats").upsert({
-                    "username": username,
-                    "chat_id": chat_id,
-                    "chat_type": chat_type  # Добавляем тип
-                }).execute()
+                try:
+                    entity = await client.get_entity(username)
+                    
+                    chat_id = entity.id
+                    chat_type = None
 
-                print(f"✅ Успешно добавлено: {username} | {chat_id} | Тип: {chat_type}")
+                    if isinstance(entity, Channel):
+                        chat_id = int(f"-100{entity.id}")
+                        chat_type = 'group' if entity.megagroup else 'channel'
+                    else:
+                        print(f"🟡 {username} не является каналом или группой. Пропускаем.")
+                        continue
 
-            except ValueError:
-                print(f"❌ Не удалось найти чат или канал по ссылке: {username}. Проверьте правильность или доступ.")
-            except Exception as e:
-                print(f"❌ Произошла непредвиденная ошибка с {username}: {e}")
+                    print(f"✅ Найден ID: {chat_id}")
+                    print(f"✅ Тип определён: {chat_type}")
+                    
+                    # --- БЛОК ДИАГНОСТИКИ ---
+                    print("[ДИАГНОСТИКА] Поиск существующих записей...")
+                    
+                    # 1. Ищем по chat_id
+                    existing_by_id = supabase.table("target_chats").select("*").eq("chat_id", chat_id).execute()
+                    if existing_by_id.data:
+                        print(f"🟡 НАЙДЕНА запись по chat_id={chat_id}: {existing_by_id.data[0]}")
+                    else:
+                        print(f"🟢 Запись с chat_id={chat_id} НЕ найдена.")
 
-    await client.disconnect()
+                    # 2. Ищем по username
+                    existing_by_username = supabase.table("target_chats").select("*").eq("username", username).execute()
+                    if existing_by_username.data:
+                        print(f"🟡 НАЙДЕНА запись по username='{username}': {existing_by_username.data[0]}")
+                    else:
+                        print(f"🟢 Запись с username='{username}' НЕ найдена.")
+                    # --- КОНЕЦ БЛОКА ДИАГНОСТИКИ ---
+
+                    # --- Запись в базу ---
+                    record_to_upsert = {
+                        "username": username,
+                        "chat_id": chat_id,
+                        "chat_type": chat_type
+                    }
+                    print(f"[ДЕЙСТВИЕ] Выполняется upsert с данными: {record_to_upsert}")
+                    
+                    response = supabase.table("target_chats").upsert(record_to_upsert).execute()
+
+                    if response.data:
+                         print(f"✅ Успешно обработано: {username} | {chat_id} | Тип: {chat_type}")
+                    else:
+                         # Upsert может вернуть пустые данные, если ничего не изменилось.
+                         # Проверяем наличие ошибки в объекте ответа, если он есть
+                         if hasattr(response, 'error') and response.error:
+                             print(f"❌ Ошибка Supabase при upsert: {response.error}")
+                         else:
+                             print("🔵 Данные не изменились или upsert вернул пустой ответ, но без ошибок.")
+
+
+                except ValueError:
+                    print(f"❌ Не удалось найти чат или канал по ссылке: {username}. Проверьте правильность или доступ (для приватных каналов нужно вступить).")
+                except Exception as e:
+                    print(f"❌ Произошла НЕПРЕДВИДЕННАЯ ошибка с {username}: {e}")
+                    # Добавляем вывод типа ошибки для лучшей диагностики
+                    print(f"   Тип ошибки: {type(e).__name__}")
+
+
     print("\nРабота скрипта завершена.")
 
 if __name__ == "__main__":
