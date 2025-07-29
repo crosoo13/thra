@@ -195,3 +195,33 @@ def get_keyword_triggers():
     except Exception as e:
         print(f"❌ Ошибка при загрузке ключевых слов: {e}")
         return []
+
+# --- НОВЫЙ ФУНКЦИОНАЛ ДЛЯ ОТСЛЕЖИВАНИЯ ЕЖЕДНЕВНЫХ КОНТАКТОВ ---
+
+def was_user_contacted_today(user_id: int) -> bool:
+    """
+    Проверяет, был ли уже контакт с пользователем СЕГОДНЯ.
+    """
+    try:
+        today_str = date.today().isoformat()
+        response = supabase.table('daily_user_contacts').select('user_id').eq('user_id', user_id).eq('last_contact_date', today_str).single().execute()
+        # Если данные есть (response.data не пустой), значит контакт сегодня был.
+        return response.data is not None
+    except Exception:
+        # Если запись не найдена, single() вызовет ошибку, что для нас равносильно False.
+        return False
+
+def record_user_contact(user_id: int):
+    """
+    Записывает или обновляет запись о контакте с пользователем на СЕГОДНЯ.
+    """
+    print(f"🔄 Запись о контакте с пользователем {user_id} на сегодня...")
+    try:
+        today_str = date.today().isoformat()
+        supabase.table('daily_user_contacts').upsert({
+            'user_id': user_id,
+            'last_contact_date': today_str
+        }).execute()
+        print(f"✅ Успешно записан контакт с пользователем {user_id}.")
+    except Exception as e:
+        print(f"❌ Ошибка при записи контакта с пользователем {user_id}: {e}")

@@ -7,7 +7,8 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
     """
     ОБНОВЛЕННАЯ ВЕРСИЯ:
     Обрабатывает ОДИН чат для публичного вовлечения ("Агент влияния").
-    Добавлена проверка на часовой лимит и ограничение на анализ последних 10 сообщений.
+    Добавлена проверка на часовой лимит, ограничение на количество сообщений для анализа
+    и проверка на повторный контакт с пользователем в течение дня.
     """
     original_chat_id = chat_info['chat_id']
     chat_type = chat_info.get('chat_type', 'group')
@@ -58,18 +59,20 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
                     newest_message_id = message.id
 
         if not messages_to_process:
+            if newest_message_id > last_id:
+                 db.update_last_message_id(processing_id, newest_message_id)
             print("  ✅ Новых сообщений для публичного ответа нет.")
             return None
 
         print(f"  📩 Найдено {len(messages_to_process)} новых сообщений для анализа.")
         
-        # --- НОВЫЙ БЛОК: ОГРАНИЧЕНИЕ КОЛИЧЕСТВА СООБЩЕНИЙ ДЛЯ АНАЛИЗА ---
+        # --- БЛОК ОГРАНИЧЕНИЯ КОЛИЧЕСТВА СООБЩЕНИЙ ДЛЯ АНАЛИЗА ---
         if len(messages_to_process) > 10:
             print(f"  ✂️ Сообщений слишком много. Для анализа будут взяты только последние 10.")
             messages_for_ai_analysis = messages_to_process[-10:]
         else:
             messages_for_ai_analysis = messages_to_process
-        # --- КОНЕЦ НОВОГО БЛОКА ---
+        # --- КОНЕЦ БЛОКА ---
 
         # 1. Проверка на ключевые слова (проверяем все сообщения, а не только последние 10)
         if keyword_triggers:
@@ -107,13 +110,19 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
                 message_map = {msg.id: msg for msg in messages_to_process}
                 target_message = message_map.get(message_id_to_reply)
 
-                if target_message and persona:
+                # --- НАЧАЛО НОВОГО БЛОКА ПРОВЕРКИ ---
+                if target_message and db.was_user_contacted_today(target_message.sender_id):
+                    print(f"  🚫 Пользователь {target_message.sender_id} уже получал ответ сегодня. Ответ от 'Агента влияния' пропускается.")
+                # --- КОНЕЦ НОВОГО БЛОКА ПРОВЕРКИ ---
+                
+                elif target_message and persona: # ИЗМЕНЕНО: добавлено 'elif'
                     print(f"  🔄 Сбор контекста для сообщения {target_message.id}...")
                     conversation_history = []
-                    async for msg in client.iter_messages(entity, limit=6, offset_id=target_message.id + 1):
-                        conversation_history.append(msg)
-                    
-                    conversation_history.reverse()
+                    # Собираем контекст до целевого сообщения
+                    async for msg in client.iter_messages(entity, limit=5, offset_id=target_message.id, reverse=True):
+                         conversation_history.append(msg)
+                    # Добавляем само целевое сообщение в конец
+                    conversation_history.append(target_message)
                     
                     print(f"  ✅ Собран контекст из {len(conversation_history)} сообщений.")
 
