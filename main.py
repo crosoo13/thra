@@ -7,7 +7,7 @@ from telethon.sessions import StringSession
 from components import config
 from components import database_manager as db
 from components import telegram_processor
-from components import sender_service
+# ❗️ sender_service удален, его роль теперь выполняет сервис на Railway
 # Новый сервис для поиска лидов будет импортирован позже, прямо перед использованием
 
 async def initialize_first_run_of_day(client):
@@ -55,6 +55,7 @@ async def main():
     last_init_date = db.get_last_initialization_date()
     today = date.today()
 
+    # Получаем сессию из базы данных, как и договаривались
     session_string = db.get_session_string()
     if not session_string:
         print("❌ Сессия не найдена. Пожалуйста, запустите скрипт для создания сессии.")
@@ -76,8 +77,7 @@ async def main():
             my_id = me.id
             print(f"✅ Скрипт запущен от имени: {me.first_name} (ID: {my_id})")
 
-            # Сначала отправляем все сообщения, ожидающие в очереди
-            await sender_service.send_pending_messages(client)
+            # ❗️ Блок отправки сообщений из очереди удален
             
             target_chats = db.get_target_chats()
             if not target_chats:
