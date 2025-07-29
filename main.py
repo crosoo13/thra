@@ -1,3 +1,7 @@
+# main.py
+# Этот скрипт предназначен для запуска по расписанию (cron).
+# Его задача - читать чаты, находить цели и передавать их воркеру.
+
 import asyncio
 from datetime import date
 from telethon.sync import TelegramClient
@@ -7,7 +11,6 @@ from telethon.sessions import StringSession
 from components import config
 from components import database_manager as db
 from components import telegram_processor
-# ❗️ sender_service удален, его роль теперь выполняет сервис на Railway
 # Новый сервис для поиска лидов будет импортирован позже, прямо перед использованием
 
 async def initialize_first_run_of_day(client):
@@ -28,6 +31,7 @@ async def initialize_first_run_of_day(client):
         try:
             entity = await client.get_entity(chat_id)
             
+            # Если это канал со связанным чатом, работаем с чатом комментариев
             if hasattr(entity, 'linked_chat_id') and entity.linked_chat_id:
                 processing_id = entity.linked_chat_id
                 print(f"  ✅ Канал {chat_id} связан с чатом для комментариев {processing_id}.")
@@ -35,9 +39,10 @@ async def initialize_first_run_of_day(client):
             else:
                 entity_to_read = entity
 
+            # Получаем последнее сообщение и обновляем ID в базе
             async for last_message in client.iter_messages(entity_to_read, limit=1):
                 db.update_last_message_id(processing_id, last_message.id)
-                break 
+                break
             else:
                 print(f"  ⚠️ В чате {processing_id} нет сообщений, пропускаем.")
 
@@ -49,13 +54,15 @@ async def initialize_first_run_of_day(client):
 
 
 async def main():
+    """
+    Основная логика работы агента-обнаружителя.
+    """
     if not db.is_agent_active():
         return
     
     last_init_date = db.get_last_initialization_date()
     today = date.today()
 
-    # Получаем сессию из базы данных, как и договаривались
     session_string = db.get_session_string()
     if not session_string:
         print("❌ Сессия не найдена. Пожалуйста, запустите скрипт для создания сессии.")
@@ -63,6 +70,7 @@ async def main():
 
     try:
         async with TelegramClient(StringSession(session_string), config.TELEGRAM_API_ID, config.TELEGRAM_API_HASH) as client:
+            # Если сегодня еще не было инициализации, выполняем ее и завершаем скрипт
             if last_init_date is None or last_init_date < today:
                 await initialize_first_run_of_day(client)
                 return
@@ -77,14 +85,15 @@ async def main():
             my_id = me.id
             print(f"✅ Скрипт запущен от имени: {me.first_name} (ID: {my_id})")
 
-            # ❗️ Блок отправки сообщений из очереди удален
+            # ВАЖНО: Логика отправки сообщений из очереди удалена,
+            # так как теперь этим занимается веб-сервер на Railway.
             
             target_chats = db.get_target_chats()
             if not target_chats:
                 print("ℹ️ Целевые чаты для обработки не найдены.")
                 return
 
-            # Загружаем ключевые слова ОДИН РАЗ
+            # Загружаем ключевые слова ОДИН РАЗ в начале
             keyword_triggers = db.get_keyword_triggers()
 
             # --- ГИБРИДНЫЙ ПОДХОД К ОБРАБОТКЕ ---
@@ -94,7 +103,7 @@ async def main():
             
             print("\n--- 🚀 Начало последовательной обработки чатов (Агент влияния) ---")
             for chat_info in target_chats:
-                # 2. Обрабатываем каждый чат старой логикой. 
+                # 2. Обрабатываем каждый чат старой логикой.
                 # Функция теперь возвращает сообщения, которые она обработала.
                 processed_messages = await telegram_processor.process_chat_for_engagement(
                     client, chat_info, my_id, keyword_triggers
@@ -127,6 +136,7 @@ async def main():
 
 if __name__ == "__main__":
     try:
+        # Проверяем наличие всех необходимых переменных окружения перед запуском
         config.validate_config()
         asyncio.run(main())
     except ValueError as e:
