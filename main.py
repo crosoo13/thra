@@ -1,6 +1,4 @@
 # main.py
-# Этот скрипт предназначен для запуска по расписанию (cron).
-# Его задача - читать чаты, находить цели и передавать их воркеру.
 
 import asyncio
 from datetime import date
@@ -11,12 +9,13 @@ from telethon.sessions import StringSession
 from components import config
 from components import database_manager as db
 from components import telegram_processor
-# Новый сервис для поиска лидов будет импортирован позже, прямо перед использованием
+# 💡 Импортируем наш новый менеджер сессий
+from components import session_manager 
 
+# --- Эта функция осталась без изменений ---
 async def initialize_first_run_of_day(client):
     """
     Выполняет первую инициализацию для нового дня.
-    (Этот код остался без изменений)
     """
     print("\n--- 🌅 ПЕРВЫЙ ЗАПУСК ДНЯ: РЕЖИМ ИНИЦИАЛИЗАЦИИ ---\n")
     target_chats = db.get_target_chats()
@@ -34,7 +33,7 @@ async def initialize_first_run_of_day(client):
             # Если это канал со связанным чатом, работаем с чатом комментариев
             if hasattr(entity, 'linked_chat_id') and entity.linked_chat_id:
                 processing_id = entity.linked_chat_id
-                print(f"  ✅ Канал {chat_id} связан с чатом для комментариев {processing_id}.")
+                print(f"   ✅ Канал {chat_id} связан с чатом для комментариев {processing_id}.")
                 entity_to_read = await client.get_entity(processing_id)
             else:
                 entity_to_read = entity
@@ -44,10 +43,10 @@ async def initialize_first_run_of_day(client):
                 db.update_last_message_id(processing_id, last_message.id)
                 break
             else:
-                print(f"  ⚠️ В чате {processing_id} нет сообщений, пропускаем.")
+                print(f"   ⚠️ В чате {processing_id} нет сообщений, пропускаем.")
 
         except Exception as e:
-            print(f"  ❌ Ошибка при инициализации чата {chat_id}: {e}")
+            print(f"   ❌ Ошибка при инициализации чата {chat_id}: {e}")
 
     db.update_initialization_date()
     print("\n--- ✅ Инициализация на сегодня завершена ---")
@@ -55,75 +54,100 @@ async def initialize_first_run_of_day(client):
 
 async def main():
     """
-    Основная логика работы агента-обнаружителя.
+    Основная логика работы агента с интегрированным созданием и проверкой сессии.
     """
     if not db.is_agent_active():
+        print("ℹ️ Агент неактивен в базе данных. Запуск отменен.")
         return
-    
-    last_init_date = db.get_last_initialization_date()
-    today = date.today()
 
+    # --- 🚀 НАДЁЖНАЯ СИСТЕМА УПРАВЛЕНИЯ СЕССИЕЙ ---
     session_string = db.get_session_string()
+    client = None
+
+    # Шаг 1: Попытка использовать существующую сессию
+    if session_string:
+        print("ℹ️ Найдена существующая сессия. Проверяем...")
+        # Инициализируем клиент с уникальными параметрами
+        client = TelegramClient(
+            StringSession(session_string), 
+            config.TELEGRAM_API_ID, 
+            config.TELEGRAM_API_HASH,
+            device_model="HR Vision Agent",
+            system_version="Windows 11",
+            app_version="1.0.0"
+        )
+        try:
+            await client.connect()
+            if not await client.is_user_authorized():
+                print("⚠️ Существующая сессия недействительна или истекла.")
+                session_string = None
+                await client.disconnect()
+                client = None
+            else:
+                print("✅ Сессия действительна.")
+        except Exception as e:
+            print(f"⚠️ Ошибка при проверке сессии: {e}. Будет создана новая.")
+            session_string = None
+            if client and client.is_connected():
+                await client.disconnect()
+            client = None
+
+    # Шаг 2: Создание новой сессии, если она отсутствует или невалидна
     if not session_string:
-        print("❌ Сессия не найдена. Пожалуйста, запустите скрипт для создания сессии.")
-        return
+        session_string = await session_manager.create_new_session()
+        if not session_string:
+            print("❌ Не удалось создать новую сессию. Работа агента прервана.")
+            return
+        # После создания новой сессии, нужно заново инициализировать клиент для основной работы
+        client = TelegramClient(
+            StringSession(session_string), 
+            config.TELEGRAM_API_ID, 
+            config.TELEGRAM_API_HASH,
+            device_model="HR Vision Agent",
+            system_version="Windows 11",
+            app_version="1.0.0"
+        )
+    # --- КОНЕЦ СИСТЕМЫ УПРАВЛЕНИЯ СЕССИЕЙ ---
 
     try:
-        async with TelegramClient(StringSession(session_string), config.TELEGRAM_API_ID, config.TELEGRAM_API_HASH) as client:
-            # Если сегодня еще не было инициализации, выполняем ее и завершаем скрипт
+        # `async with` сам управляет подключением и отключением клиента
+        async with client:
+            last_init_date = db.get_last_initialization_date()
+            today = date.today()
+
+            # --- Первоначальная логика без изменений ---
             if last_init_date is None or last_init_date < today:
                 await initialize_first_run_of_day(client)
                 return
 
             print("\n--- ✨ ЗАПУСК HR VISION AGENT (РАБОЧИЙ РЕЖИМ) ✨ ---\n")
             
-            if not await client.is_user_authorized():
-                print("❌ Пользователь не авторизован. Пожалуйста, запустите скрипт для создания сессии.")
-                return
-
             me = await client.get_me()
             my_id = me.id
             print(f"✅ Скрипт запущен от имени: {me.first_name} (ID: {my_id})")
 
-            # ВАЖНО: Логика отправки сообщений из очереди удалена,
-            # так как теперь этим занимается веб-сервер на Railway.
-            
             target_chats = db.get_target_chats()
             if not target_chats:
                 print("ℹ️ Целевые чаты для обработки не найдены.")
                 return
 
-            # Загружаем ключевые слова ОДИН РАЗ в начале
             keyword_triggers = db.get_keyword_triggers()
-
-            # --- ГИБРИДНЫЙ ПОДХОД К ОБРАБОТКЕ ---
-
-            # 1. Готовим пустой список для сбора ВСЕХ сообщений для "Охотника за лидами"
             all_messages_for_lead_hunter = []
             
             print("\n--- 🚀 Начало последовательной обработки чатов (Агент влияния) ---")
             for chat_info in target_chats:
-                # 2. Обрабатываем каждый чат старой логикой.
-                # Функция теперь возвращает сообщения, которые она обработала.
                 processed_messages = await telegram_processor.process_chat_for_engagement(
                     client, chat_info, my_id, keyword_triggers
                 )
-                
-                # 3. Добавляем обработанные сообщения в общий список для "Охотника"
                 if processed_messages:
                     all_messages_for_lead_hunter.extend(processed_messages)
             
             print("\n--- ✅ Все чаты обработаны 'Агентом влияния' ---")
 
-            # 4. ПОСЛЕ цикла, запускаем новую логику ("Охотник за лидами") на всех собранных сообщениях
             if all_messages_for_lead_hunter:
                 print("\n--- 🕵️‍♂️ Запуск 'Охотника за лидами' по всем собранным сообщениям ---")
-                
-                # Импортируем новый сервис прямо здесь, чтобы избежать циклических зависимостей
-                # и сохранить код чистым.
                 from components import lead_hunter_service 
                 await lead_hunter_service.find_and_process_leads(client, all_messages_for_lead_hunter)
-                
                 print("\n--- ✅ Поиск лидов завершен ---")
             else:
                 print("\n--- ℹ️ Новых сообщений для поиска лидов не найдено ---")
@@ -138,6 +162,9 @@ if __name__ == "__main__":
     try:
         # Проверяем наличие всех необходимых переменных окружения перед запуском
         config.validate_config()
+        # Убедимся, что база данных готова к работе
+        if hasattr(db, 'init_db'):
+            db.init_db()
         asyncio.run(main())
     except ValueError as e:
         print(e)
