@@ -101,7 +101,6 @@ async def generate_final_reply(conversation_history, persona: str, chat_id: int,
 
         action = ai_actions[0]
         
-        # --- ИСПРАВЛЕННЫЙ БЛОК ---
         # Извлекаем данные из последнего сообщения в истории
         original_message = conversation_history[-1] if conversation_history else None
         original_message_text = original_message.text if original_message else ""
@@ -110,12 +109,12 @@ async def generate_final_reply(conversation_history, persona: str, chat_id: int,
         # Добавляем все необходимые данные в итоговый объект
         action.update({
             'target_chat_id': chat_id,
-            'target_user_id': target_user_id, # <-- Вот это исправление
+            'target_user_id': target_user_id,
             'action_type': 'reply',
             'model_version': config.GEMINI_PRO_MODEL_NAME,
             'prompt_version': prompt_name,
-            'original_message_text': original_message_text
-            'persona': persona # <--- ДОБАВЬТЕ ЭТУ СТРОКУ
+            'original_message_text': original_message_text,
+            'persona': persona  # <-- Вот это изменение
         })
         return action
 
