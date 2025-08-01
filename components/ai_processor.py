@@ -115,6 +115,7 @@ async def generate_final_reply(conversation_history, persona: str, chat_id: int,
             'model_version': config.GEMINI_PRO_MODEL_NAME,
             'prompt_version': prompt_name,
             'original_message_text': original_message_text
+            'persona': persona # <--- ДОБАВЬТЕ ЭТУ СТРОКУ
         })
         return action
 
