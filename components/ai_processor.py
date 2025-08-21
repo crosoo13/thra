@@ -23,7 +23,7 @@ async def get_routing_decisions(messages):
     print("  🤖 Этап 1 (Агент влияния): Отправка сообщений на сортировку...")
     prompt_template = db.get_prompt_template("router_prompt")
     if not prompt_template:
-        print("    ❌ Не найден 'router_prompt' в базе данных!")
+        print("     ❌ Не найден 'router_prompt' в базе данных!")
         return []
 
     messages_for_prompt = [
@@ -38,13 +38,28 @@ async def get_routing_decisions(messages):
     full_prompt = prompt_template.replace('{messages_for_prompt}', messages_json)
 
     try:
+        # --- НОВАЯ ЛОГИКА: ПОДСЧЕТ ТОКЕНОВ ---
+        try:
+            token_count = await gemini_flash_model.count_tokens_async(full_prompt)
+            print(f"    📊 Длина промпта для Сортировщика: {token_count.total_tokens} токенов.")
+        except Exception as e:
+            print(f"    ⚠️ Не удалось подсчитать токены для Сортировщика: {e}")
+        # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+
         response = await gemini_flash_model.generate_content_async(full_prompt)
+        
+        # --- НОВАЯ ЛОГИКА: ПРОВЕРКА ОТВЕТА ---
+        if not response.parts:
+            print(f"     ❌ Ошибка (Сортировщик): Gemini Flash вернул пустой ответ. Причина: {response.candidates[0].finish_reason.name}")
+            return []
+        # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+
         cleaned_response_text = response.text.strip().removeprefix('```json').removesuffix('```')
         decisions = json.loads(cleaned_response_text)
-        print(f"    ✅ Сортировщик (Агент влияния) принял {len(decisions)} решений.")
+        print(f"     ✅ Сортировщик (Агент влияния) принял {len(decisions)} решений.")
         return decisions
     except Exception as e:
-        print(f"    ❌ Критическая ошибка на этапе сортировки (Агент влияния): {e}")
+        print(f"     ❌ Критическая ошибка на этапе сортировки (Агент влияния): {e}")
         return []
 
 
@@ -57,7 +72,7 @@ async def generate_final_reply(conversation_history, persona: str, chat_id: int,
 
     prompt_template = db.get_prompt_template(prompt_name)
     if not prompt_template:
-        print(f"    ❌ Не найден промпт '{prompt_name}' в базе данных!")
+        print(f"     ❌ Не найден промпт '{prompt_name}' в базе данных!")
         return None
 
     # --- ФОРМИРОВАНИЕ ПРИМЕРОВ ---
@@ -91,7 +106,21 @@ async def generate_final_reply(conversation_history, persona: str, chat_id: int,
     full_prompt = prompt_with_bad.replace('{conversation_history_json}', history_json_string)
     
     try:
+        # --- НОВАЯ ЛОГИКА: ПОДСЧЕТ ТОКЕНОВ ---
+        try:
+            token_count = await gemini_pro_model.count_tokens_async(full_prompt)
+            print(f"    📊 Длина промпта для Генератора '{persona}': {token_count.total_tokens} токенов.")
+        except Exception as e:
+            print(f"    ⚠️ Не удалось подсчитать токены для Генератора: {e}")
+        # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+
         response = await gemini_pro_model.generate_content_async(full_prompt)
+        
+        # --- НОВАЯ ЛОГИКА: ПРОВЕРКА ОТВЕТА, ЧТОБЫ СКРИПТ НЕ ПАДАЛ ---
+        if not response.parts:
+            print(f"     ❌ Ошибка (Генератор): Gemini Pro вернул пустой ответ. Причина: {response.candidates[0].finish_reason.name}")
+            return None # Просто выходим из функции, если ответа нет
+        # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
         
         cleaned_response_text = response.text.strip().removeprefix('```json').removesuffix('```')
         ai_actions = json.loads(cleaned_response_text)
@@ -101,12 +130,10 @@ async def generate_final_reply(conversation_history, persona: str, chat_id: int,
 
         action = ai_actions[0]
         
-        # Извлекаем данные из последнего сообщения в истории
         original_message = conversation_history[-1] if conversation_history else None
         original_message_text = original_message.text if original_message else ""
         target_user_id = original_message.sender_id if original_message else None
 
-        # Добавляем все необходимые данные в итоговый объект
         action.update({
             'target_chat_id': chat_id,
             'target_user_id': target_user_id,
@@ -114,15 +141,15 @@ async def generate_final_reply(conversation_history, persona: str, chat_id: int,
             'model_version': config.GEMINI_PRO_MODEL_NAME,
             'prompt_version': prompt_name,
             'original_message_text': original_message_text,
-            'persona': persona  # <-- Вот это изменение
+            'persona': persona
         })
         return action
 
     except json.JSONDecodeError:
-        print(f"    ❌ Ошибка (Агент влияния): Gemini Pro вернул невалидный JSON.")
+        print(f"     ❌ Ошибка (Агент влияния): Gemini Pro вернул невалидный JSON.")
         return None
     except Exception as e:
-        print(f"    ❌ Критическая ошибка на этапе генерации ответа (Агент влияния): {e}")
+        print(f"     ❌ Критическая ошибка на этапе генерации ответа (Агент влияния): {e}")
         return None
 
 
@@ -135,7 +162,7 @@ async def get_lead_decisions(messages):
     print("  🕵️‍♂️ Этап 1 (Охотник): Отправка сообщений на классификацию лидов...")
     prompt_template = db.get_prompt_template("lead_finder_prompt")
     if not prompt_template:
-        print("    ❌ Не найден 'lead_finder_prompt' в базе данных!")
+        print("     ❌ Не найден 'lead_finder_prompt' в базе данных!")
         return []
 
     messages_for_prompt = [
@@ -150,13 +177,28 @@ async def get_lead_decisions(messages):
     full_prompt = prompt_template.replace('{messages_for_prompt}', messages_json)
 
     try:
+        # --- НОВАЯ ЛОГИКА: ПОДСЧЕТ ТОКЕНОВ ---
+        try:
+            token_count = await gemini_flash_model.count_tokens_async(full_prompt)
+            print(f"    📊 Длина промпта для Классификатора лидов: {token_count.total_tokens} токенов.")
+        except Exception as e:
+            print(f"    ⚠️ Не удалось подсчитать токены для Классификатора лидов: {e}")
+        # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+
         response = await gemini_flash_model.generate_content_async(full_prompt)
+
+        # --- НОВАЯ ЛОГИКА: ПРОВЕРКА ОТВЕТА ---
+        if not response.parts:
+            print(f"    ❌ Ошибка (Классификатор лидов): Gemini Flash вернул пустой ответ. Причина: {response.candidates[0].finish_reason.name}")
+            return []
+        # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+
         cleaned_response_text = response.text.strip().removeprefix('```json').removesuffix('```')
         decisions = json.loads(cleaned_response_text)
-        print(f"    ✅ Классификатор (Охотник) принял {len(decisions)} решений.")
+        print(f"     ✅ Классификатор (Охотник) принял {len(decisions)} решений.")
         return decisions
     except Exception as e:
-        print(f"    ❌ Критическая ошибка на этапе классификации лидов (Охотник): {e}")
+        print(f"     ❌ Критическая ошибка на этапе классификации лидов (Охотник): {e}")
         return []
 
 
@@ -167,10 +209,9 @@ async def generate_lead_outreach_message(target_message):
     print(f"  🕵️‍♂️ Этап 2 (Охотник): Генерация персонального сообщения для лида...")
     prompt_template = db.get_prompt_template("lead_outreach_prompt")
     if not prompt_template:
-        print("    ❌ Не найден 'lead_outreach_prompt' в базе данных!")
+        print("     ❌ Не найден 'lead_outreach_prompt' в базе данных!")
         return None
     
-    # Формируем информацию о лиде для промпта
     lead_message_info = {
         "Имя": target_message.sender.first_name,
         "Сообщение": target_message.text.strip()
@@ -180,15 +221,30 @@ async def generate_lead_outreach_message(target_message):
     full_prompt = prompt_template.replace('{lead_message_json}', lead_message_json)
 
     try:
+        # --- НОВАЯ ЛОГИКА: ПОДСЧЕТ ТОКЕНОВ ---
+        try:
+            token_count = await gemini_pro_model.count_tokens_async(full_prompt)
+            print(f"    📊 Длина промпта для Генератора лидов: {token_count.total_tokens} токенов.")
+        except Exception as e:
+            print(f"    ⚠️ Не удалось подсчитать токены для Генератора лидов: {e}")
+        # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+
         response = await gemini_pro_model.generate_content_async(full_prompt)
+
+        # --- НОВАЯ ЛОГИКА: ПРОВЕРКА ОТВЕТА ---
+        if not response.parts:
+            print(f"    ❌ Ошибка (Генератор лидов): Gemini Pro вернул пустой ответ. Причина: {response.candidates[0].finish_reason.name}")
+            return None
+        # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+
         cleaned_response_text = response.text.strip().removeprefix('```json').removesuffix('```')
         action = json.loads(cleaned_response_text)
-        print(f"    ✅ Сгенерирован текст для лида: {target_message.sender.first_name}")
+        print(f"     ✅ Сгенерирован текст для лида: {target_message.sender.first_name}")
         return action
 
     except json.JSONDecodeError:
-        print(f"    ❌ Ошибка (Охотник): Gemini Pro вернул невалидный JSON.")
+        print(f"     ❌ Ошибка (Охотник): Gemini Pro вернул невалидный JSON.")
         return None
     except Exception as e:
-        print(f"    ❌ Критическая ошибка на этапе генерации сообщения лиду (Охотник): {e}")
+        print(f"     ❌ Критическая ошибка на этапе генерации сообщения лиду (Охотник): {e}")
         return None
