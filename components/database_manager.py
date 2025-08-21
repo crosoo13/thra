@@ -145,7 +145,7 @@ def get_prompt_template(prompt_name: str):
         print(f"❌ Ошибка при загрузке промпта '{prompt_name}': {e}")
         return None
 
-def get_examples_by_status(prompt_name: str, status: str, limit: int = 10):
+def get_examples_by_status(prompt_name: str, status: str, limit: int = 5):
     print(f"🔄 Запрос {limit} примеров со статусом '{status}' для промпта '{prompt_name}'...")
     sql = """
         SELECT original_message_text, ai_generated_text 
