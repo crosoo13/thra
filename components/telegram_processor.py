@@ -10,6 +10,11 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
     Добавлена проверка на часовой лимит, ограничение на количество сообщений для анализа
     и проверка на повторный контакт с пользователем в течение дня.
     """
+    # --- НАСТРОЙКА ЛИМИТА ИСТОРИИ ---
+    # 👇 Вот новая настройка. Можете менять это число.
+    MESSAGE_HISTORY_LIMIT = 7 
+    # ------------------------------------
+
     original_chat_id = chat_info['chat_id']
     chat_type = chat_info.get('chat_type', 'group')
     processing_id = original_chat_id
@@ -22,7 +27,7 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
         if last_post_time:
             time_since_last_post = datetime.now(timezone.utc) - last_post_time
             if time_since_last_post < timedelta(hours=1):
-                print(f"  ⏳ Часовой лимит для чата {processing_id} еще не истек. Пропускаем.")
+                print(f" 	⏳ Часовой лимит для чата {processing_id} еще не истек. Пропускаем.")
                 print("-" * 50)
                 return None
         
@@ -33,17 +38,17 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
             if hasattr(entity, 'linked_chat_id') and entity.linked_chat_id:
                 processing_id = entity.linked_chat_id
                 entity = await client.get_entity(processing_id)
-                print(f"  ✅ Найден связанный чат для комментариев: {processing_id}")
+                print(f" 	✅ Найден связанный чат для комментариев: {processing_id}")
             else:
-                print(f"  ⚠️ Для канала {original_chat_id} комментарии отключены. Пропускаем.")
+                print(f" 	⚠️ Для канала {original_chat_id} комментарии отключены. Пропускаем.")
                 return None
 
         # Получение новых сообщений
         last_id = db.get_last_message_id(processing_id)
         today_start_utc = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         
-        print(f"  ID последнего обработанного сообщения из БД: {last_id}")
-        print("  🔄 Получение новых сообщений, отправленных СЕГОДНЯ...")
+        print(f" 	ID последнего обработанного сообщения из БД: {last_id}")
+        print(" 	🔄 Получение новых сообщений, отправленных СЕГОДНЯ...")
 
         messages_to_process = []
         newest_message_id = last_id
@@ -60,15 +65,15 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
 
         if not messages_to_process:
             if newest_message_id > last_id:
-                 db.update_last_message_id(processing_id, newest_message_id)
-            print("  ✅ Новых сообщений для публичного ответа нет.")
+                db.update_last_message_id(processing_id, newest_message_id)
+            print(" 	✅ Новых сообщений для публичного ответа нет.")
             return None
 
-        print(f"  📩 Найдено {len(messages_to_process)} новых сообщений для анализа.")
+        print(f" 	📩 Найдено {len(messages_to_process)} новых сообщений для анализа.")
         
         # --- БЛОК ОГРАНИЧЕНИЯ КОЛИЧЕСТВА СООБЩЕНИЙ ДЛЯ АНАЛИЗА ---
         if len(messages_to_process) > 10:
-            print(f"  ✂️ Сообщений слишком много. Для анализа будут взяты только последние 10.")
+            print(f" 	✂️ Сообщений слишком много. Для анализа будут взяты только последние 10.")
             messages_for_ai_analysis = messages_to_process[-10:]
         else:
             messages_for_ai_analysis = messages_to_process
@@ -76,10 +81,10 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
 
         # 1. Проверка на ключевые слова (проверяем все сообщения, а не только последние 10)
         if keyword_triggers:
-            print("  🔍 Проверка сообщений на ключевые слова...")
+            print(" 	🔍 Проверка сообщений на ключевые слова...")
             for message in messages_to_process:
                 if message.text and any(keyword.lower() in message.text.lower() for keyword in keyword_triggers):
-                    print(f"  🚨 Найдено ключевое слово в сообщении {message.id}!")
+                    print(f" 	🚨 Найдено ключевое слово в сообщении {message.id}!")
                     alert_payload = {
                         'action_type': 'keyword_alert',
                         'target_chat_id': processing_id,
@@ -88,10 +93,10 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
                     }
                     approval_service.send_action_for_approval(alert_payload)
         else:
-            print("  ℹ️ Список ключевых слов пуст, проверка пропускается.")
+            print(" 	ℹ️ Список ключевых слов пуст, проверка пропускается.")
 
         # 2. Запуск AI-конвейера для публичного ответа (используем ограниченный список)
-        print("  🤖 Запуск AI-конвейера (Агент влияния)...")
+        print(" 	🤖 Запуск AI-конвейера (Агент влияния)...")
         routing_decisions = await ai_processor.get_routing_decisions(messages_for_ai_analysis)
 
         if routing_decisions:
@@ -100,7 +105,7 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
             final_decision = None
             if decisions_to_reply:
                 if len(decisions_to_reply) > 1:
-                    print(f"  ⚠️ AI предложил {len(decisions_to_reply)} ответов. Выбираем только первый, согласно правилу.")
+                    print(f" 	⚠️ AI предложил {len(decisions_to_reply)} ответов. Выбираем только первый, согласно правилу.")
                 final_decision = decisions_to_reply[0]
 
             if final_decision:
@@ -112,29 +117,36 @@ async def process_chat_for_engagement(client, chat_info, my_id, keyword_triggers
 
                 # --- НАЧАЛО НОВОГО БЛОКА ПРОВЕРКИ ---
                 if target_message and db.was_user_contacted_today(target_message.sender_id):
-                    print(f"  🚫 Пользователь {target_message.sender_id} уже получал ответ сегодня. Ответ от 'Агента влияния' пропускается.")
+                    print(f" 	🚫 Пользователь {target_message.sender_id} уже получал ответ сегодня. Ответ от 'Агента влияния' пропускается.")
                 # --- КОНЕЦ НОВОГО БЛОКА ПРОВЕРКИ ---
                 
                 elif target_message and persona: # ИЗМЕНЕНО: добавлено 'elif'
-                    print(f"  🔄 Сбор контекста для сообщения {target_message.id}...")
-                    conversation_history = []
-                    # Собираем контекст до целевого сообщения
-                    async for msg in client.iter_messages(entity, limit=5, offset_id=target_message.id, reverse=True):
-                         conversation_history.append(msg)
-                    # Добавляем само целевое сообщение в конец
-                    conversation_history.append(target_message)
                     
-                    print(f"  ✅ Собран контекст из {len(conversation_history)} сообщений.")
+                    # --- НОВАЯ ЛОГИКА ОГРАНИЧЕНИЯ ИСТОРИИ ПЕРЕПИСКИ ---
+                    print(f" 	🔄 Сбор контекста для сообщения {target_message.id}...")
+                    try:
+                        # Находим индекс целевого сообщения в списке, который видел AI
+                        target_index = messages_for_ai_analysis.index(target_message)
+                        # Берем срез всех сообщений до целевого (включительно)
+                        history_slice = messages_for_ai_analysis[:target_index + 1]
+                        # Из этого среза берем только N последних сообщений
+                        conversation_history = history_slice[-MESSAGE_HISTORY_LIMIT:]
+                    except ValueError:
+                        # Если сообщение не найдено (маловероятно), берем его одно
+                        conversation_history = [target_message]
+                    # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+
+                    print(f" 	✅ Собран контекст из {len(conversation_history)} сообщений (лимит: {MESSAGE_HISTORY_LIMIT}).")
 
                     final_action = await ai_processor.generate_final_reply(conversation_history, persona, processing_id, my_id)
                     
                     if final_action:
-                        print("  🚀 Сгенерирован 1 публичный ответ. Отправка на утверждение...")
+                        print(" 	🚀 Сгенерирован 1 публичный ответ. Отправка на утверждение...")
                         approval_service.send_action_for_approval(final_action)
                     else:
-                        print("  ✅ AI решил ответить, но генератор не создал финальный текст.")
+                        print(" 	✅ AI решил ответить, но генератор не создал финальный текст.")
             else:
-                print("  ✅ AI (Агент влияния) не нашел подходящего сообщения для ответа.")
+                print(" 	✅ AI (Агент влияния) не нашел подходящего сообщения для ответа.")
 
         # Обновляем ID последнего сообщения в базе данных (используя ID из полного списка)
         if newest_message_id > last_id:
