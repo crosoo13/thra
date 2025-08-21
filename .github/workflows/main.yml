@@ -1,11 +1,6 @@
 name: Run HR Vision Agent
 
 on:
-  # Встроенный планировщик GitHub отключен, чтобы избежать двойного запуска.
-  # schedule:
-  #   # Запуск каждые 5 минут, с 8:00 до 17:00 по МСК (что равно 5:00-14:00 UTC)
-  #   - cron: '*/5 5-14 * * *'
-  
   # Позволяет запускать этот воркфлоу вручную и через внешние сервисы (API)
   workflow_dispatch:
 
@@ -42,8 +37,9 @@ jobs:
         echo "$HOME/.local/bin" >> $GITHUB_PATH
         python -u main.py
       env:
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        # 👇 ИЗМЕНЕНИЯ ЗДЕСЬ
+        NEON_DB_CONNECTION_STRING: ${{ secrets.NEON_DB_CONNECTION_STRING }}
+        # 👆 SUPABASE_URL и SUPABASE_KEY УДАЛЕНЫ
         TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
         TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         SESSION_NAME: ${{ secrets.SESSION_NAME }}
