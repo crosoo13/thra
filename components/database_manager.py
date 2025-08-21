@@ -1,227 +1,292 @@
-# components/database_manager.py
+# components/database_manager.py - НОВЫЙ КОД ДЛЯ NEON
 
-from supabase import create_client, Client
-from datetime import date, datetime, timezone
+import psycopg2
+import psycopg2.extras  # Необходим для получения результатов в виде словарей
+from datetime import date, datetime
 from . import config
 
-try:
-    supabase: Client = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
-    print("✅ Успешное подключение к Supabase.")
-except Exception as e:
-    print(f"❌ Ошибка подключения к Supabase: {e}")
-    exit()
+def _get_db_connection():
+    """Создает и возвращает новое соединение с базой данных Neon."""
+    try:
+        conn = psycopg2.connect(config.DATABASE_URL)
+        return conn
+    except Exception as e:
+        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Не удалось подключиться к базе данных Neon: {e}")
+        exit()
+
+# --- Управление сессией ---
 
 def get_session_string():
-    print("🔄 Попытка получить сессию из Supabase...")
+    print("🔄 Попытка получить сессию из Neon...")
+    sql = "SELECT session_file FROM public.sessions WHERE agent_name = %s LIMIT 1"
     try:
-        response = supabase.table('sessions').select("session_file").eq('agent_name', config.SESSION_NAME).single().execute()
-        if response.data and response.data.get('session_file'):
-            print("✅ Сессия успешно получена из Supabase.")
-            return response.data.get('session_file')
-        print("ℹ️ Сессия не найдена в Supabase.")
-        return None
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (config.SESSION_NAME,))
+                result = cur.fetchone()
+                if result:
+                    print("✅ Сессия успешно получена из Neon.")
+                    return result[0]
+                print("ℹ️ Сессия не найдена в Neon.")
+                return None
     except Exception as e:
-        print(f"❌ Ошибка при получении сессии из Supabase: {e}")
+        print(f"❌ Ошибка при получении сессии из Neon: {e}")
         return None
 
 def save_session_string(session_string):
-    print("🔄 Сохранение новой сессии в Supabase...")
+    print("🔄 Сохранение новой сессии в Neon...")
+    sql = """
+        INSERT INTO public.sessions (agent_name, session_file) 
+        VALUES (%s, %s)
+        ON CONFLICT (agent_name) 
+        DO UPDATE SET session_file = EXCLUDED.session_file;
+    """
     try:
-        supabase.table('sessions').upsert({'agent_name': config.SESSION_NAME, 'session_file': session_string}).execute()
-        print("✅ Сессия успешно сохранена в Supabase.")
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (config.SESSION_NAME, session_string))
+            conn.commit()
+            print("✅ Сессия успешно сохранена в Neon.")
     except Exception as e:
-        print(f"❌ Ошибка при сохранении сессии в Supabase: {e}")
+        print(f"❌ Ошибка при сохранении сессии в Neon: {e}")
+
+# --- Работа с чатами и сообщениями ---
 
 def get_target_chats():
-    print("🔄 Получение списка целевых чатов из Supabase...")
+    print("🔄 Получение списка целевых чатов из Neon...")
+    sql = "SELECT chat_id, chat_type FROM public.target_chats"
     try:
-        response = supabase.table('target_chats').select('chat_id, chat_type').execute()
-        chats = response.data or []
-        print(f"✅ Найдено {len(chats)} целевых чатов.")
-        return chats
+        with _get_db_connection() as conn:
+            # RealDictCursor гарантирует, что результат будет списком словарей,
+            # как это делала библиотека Supabase, чтобы не ломать остальной код.
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql)
+                chats = cur.fetchall()
+                print(f"✅ Найдено {len(chats)} целевых чатов.")
+                return chats
     except Exception as e:
-        print(f"❌ Ошибка при получении чатов из Supabase: {e}")
+        print(f"❌ Ошибка при получении чатов из Neon: {e}")
         return []
 
 def get_last_message_id(chat_id):
+    sql = "SELECT last_message_id FROM public.channel_state WHERE chat_id = %s"
     try:
-        response = supabase.table('channel_state').select('last_message_id').eq('chat_id', chat_id).single().execute()
-        return int(response.data.get('last_message_id', 0)) if response.data else 0
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (chat_id,))
+                result = cur.fetchone()
+                return int(result[0]) if result else 0
     except Exception:
         return 0
 
 def update_last_message_id(chat_id, message_id):
     print(f"🔄 Обновление ID последнего сообщения для чата {chat_id} на {message_id}...")
+    sql = """
+        INSERT INTO public.channel_state (chat_id, last_message_id) 
+        VALUES (%s, %s)
+        ON CONFLICT (chat_id) 
+        DO UPDATE SET last_message_id = EXCLUDED.last_message_id;
+    """
     try:
-        supabase.table('channel_state').upsert({'chat_id': chat_id, 'last_message_id': message_id}).execute()
-        print(f"✅ ID последнего сообщения для чата {chat_id} успешно обновлен.")
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (chat_id, message_id))
+            conn.commit()
+            print(f"✅ ID последнего сообщения для чата {chat_id} успешно обновлен.")
     except Exception as e:
         print(f"❌ Критическая ошибка при записи ID последнего сообщения для чата {chat_id}: {e}")
 
 def get_last_post_time(chat_id: int) -> datetime | None:
-    """Получает время последнего ответа агента в указанном чате."""
+    sql = "SELECT last_agent_post_timestamp FROM public.channel_state WHERE chat_id = %s"
     try:
-        response = supabase.table('channel_state').select('last_agent_post_timestamp').eq('chat_id', chat_id).single().execute()
-        if response.data and response.data.get('last_agent_post_timestamp'):
-            # Преобразуем строку времени из Supabase в объект datetime с таймзоной
-            return datetime.fromisoformat(response.data['last_agent_post_timestamp'])
-        return None
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (chat_id,))
+                result = cur.fetchone()
+                # psycopg2 автоматически преобразует таймстемп в объект datetime
+                return result[0] if result and result[0] else None
     except Exception:
-        # Если записи нет или произошла ошибка, считаем, что агент еще не писал
         return None
 
 def update_last_post_time(chat_id: int):
-    """Обновляет время последнего ответа агента в чате на текущее."""
     print(f"🔄 Установка метки времени последнего ответа для чата {chat_id}...")
+    # Используем SQL-функцию NOW() для установки текущего времени на сервере
+    sql = """
+        INSERT INTO public.channel_state (chat_id, last_agent_post_timestamp) 
+        VALUES (%s, NOW())
+        ON CONFLICT (chat_id) 
+        DO UPDATE SET last_agent_post_timestamp = NOW();
+    """
     try:
-        # Используем 'now()' из Postgres, чтобы гарантировать правильное время на сервере
-        supabase.table('channel_state').upsert({
-            'chat_id': chat_id,
-            'last_agent_post_timestamp': 'now()'
-        }).execute()
-        print(f"✅ Метка времени для чата {chat_id} успешно установлена.")
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (chat_id,))
+            conn.commit()
+            print(f"✅ Метка времени для чата {chat_id} успешно установлена.")
     except Exception as e:
         print(f"❌ Ошибка при обновлении метки времени для чата {chat_id}: {e}")
 
+# --- Работа с промптами и логами ---
+
 def get_prompt_template(prompt_name: str):
-    print(f"🔄 Загрузка промпта '{prompt_name}' из Supabase...")
+    print(f"🔄 Загрузка промпта '{prompt_name}' из Neon...")
+    sql = "SELECT content FROM public.prompts WHERE name = %s"
     try:
-        response = supabase.table('prompts').select('content').eq('name', prompt_name).single().execute()
-        if response.data:
-            print(f"✅ Промпт '{prompt_name}' успешно загружен.")
-            return response.data['content'].replace('\r\n', '\n')
-        print(f"❌ Промпт '{prompt_name}' не найден в Supabase.")
-        return None
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (prompt_name,))
+                result = cur.fetchone()
+                if result:
+                    print(f"✅ Промпт '{prompt_name}' успешно загружен.")
+                    return result[0].replace('\r\n', '\n')
+                print(f"❌ Промпт '{prompt_name}' не найден в Neon.")
+                return None
     except Exception as e:
         print(f"❌ Ошибка при загрузке промпта '{prompt_name}': {e}")
         return None
 
 def get_examples_by_status(prompt_name: str, status: str, limit: int = 10):
-    print(f"🔄 Запрос {limit} примеров со статусом '{status}' для промта '{prompt_name}'...")
+    print(f"🔄 Запрос {limit} примеров со статусом '{status}' для промпта '{prompt_name}'...")
+    sql = """
+        SELECT original_message_text, ai_generated_text 
+        FROM public.ai_suggestions_log
+        WHERE status = %s AND prompt_version = %s
+        ORDER BY created_at DESC
+        LIMIT %s
+    """
     try:
-        response = supabase.table('ai_suggestions_log').select(
-            "original_message_text, ai_generated_text"
-        ).eq(
-            'status', status
-        ).eq(
-            'prompt_version', prompt_name
-        ).order(
-            'created_at', desc=True
-        ).limit(
-            limit
-        ).execute()
-
-        if response.data:
-            print(f"✅ Найдено {len(response.data)} примеров.")
-            return list(reversed(response.data))
-        return []
+        with _get_db_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql, (status, prompt_name, limit))
+                examples = cur.fetchall()
+                if examples:
+                    print(f"✅ Найдено {len(examples)} примеров.")
+                    return list(reversed(examples)) # Сохраняем логику разворота списка
+                return []
     except Exception as e:
         print(f"❌ Ошибка при получении примеров для '{prompt_name}' со статусом '{status}': {e}")
         return []
 
+# --- Работа с отложенными действиями ---
+
 def get_pending_actions():
+    sql = "SELECT * FROM public.pending_actions WHERE is_completed = FALSE"
     try:
-        response = supabase.table('pending_actions').select('*').eq('is_completed', False).execute()
-        if response.data:
-            return response.data
-        return []
+        with _get_db_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql)
+                return cur.fetchall()
     except Exception as e:
-        print(f"❌ Ошибка при получении отложенных действий из Supabase: {e}")
+        print(f"❌ Ошибка при получении отложенных действий из Neon: {e}")
         return []
 
 def mark_action_as_completed(action_id):
+    sql = "UPDATE public.pending_actions SET is_completed = TRUE WHERE id = %s"
     try:
-        supabase.table('pending_actions').update({'is_completed': True}).eq('id', action_id).execute()
-        return True
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (action_id,))
+            conn.commit()
+            return True
     except Exception as e:
-        print(f"❌ Ошибка при обновлении статуса действия {action_id} в Supabase: {e}")
+        print(f"❌ Ошибка при обновлении статуса действия {action_id} в Neon: {e}")
         return False
 
+# --- Работа со статусом агента ---
+
 def is_agent_active():
-    print("🔄 Проверка статуса агента в Supabase...")
+    print("🔄 Проверка статуса агента в Neon...")
+    sql = "SELECT is_active FROM public.agent_status WHERE id = '1'"
     try:
-        response = supabase.table('agent_status').select("is_active").eq('id', 1).single().execute()
-        if response.data and 'is_active' in response.data:
-            is_active = response.data['is_active']
-            if is_active:
-                print("✅ Агент активен. Продолжаем работу.")
-                return True
-            else:
-                print("⏹️ Агент неактивен. Завершение работы.")
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                result = cur.fetchone()
+                if result:
+                    is_active = result[0]
+                    if is_active:
+                        print("✅ Агент активен. Продолжаем работу.")
+                        return True
+                    else:
+                        print("⏹️ Агент неактивен. Завершение работы.")
+                        return False
+                print("⚠️ Статус агента не найден. Завершение работы.")
                 return False
-        print("⚠️ Статус агента не найден в Supabase. Завершение работы.")
-        return False
     except Exception as e:
         print(f"❌ Ошибка при проверке статуса агента: {e}")
         return False
 
 def get_last_initialization_date():
-    """Получает дату последней инициализации агента."""
     print("🔄 Проверка даты последней инициализации...")
+    sql = "SELECT last_initialization_date FROM public.agent_status WHERE id = '1'"
     try:
-        response = supabase.table('agent_status').select("last_initialization_date").eq('id', 1).single().execute()
-        if response.data and response.data.get('last_initialization_date'):
-            # Преобразуем строку 'YYYY-MM-DD' в объект date
-            return date.fromisoformat(response.data['last_initialization_date'])
-        print("ℹ️ Дата инициализации не найдена.")
-        return None
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                result = cur.fetchone()
+                if result and result[0]:
+                    # psycopg2 сам преобразует в объект date, fromisoformat не нужен
+                    return result[0]
+                print("ℹ️ Дата инициализации не найдена.")
+                return None
     except Exception as e:
         print(f"❌ Ошибка при получении даты инициализации: {e}")
         return None
 
 def update_initialization_date():
-    """Обновляет дату инициализации на сегодня."""
-    today_str = date.today().isoformat()
-    print(f"🔄 Обновление даты инициализации на {today_str}...")
+    today = date.today()
+    print(f"🔄 Обновление даты инициализации на {today.isoformat()}...")
+    sql = "UPDATE public.agent_status SET last_initialization_date = %s WHERE id = '1'"
     try:
-        supabase.table('agent_status').update({'last_initialization_date': today_str}).eq('id', 1).execute()
-        print("✅ Дата инициализации успешно обновлена.")
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (today,))
+            conn.commit()
+            print("✅ Дата инициализации успешно обновлена.")
     except Exception as e:
         print(f"❌ Ошибка при обновлении даты инициализации: {e}")
 
+# --- Ключевые слова и контакты ---
+
 def get_keyword_triggers():
-    """Получает список ключевых слов-триггеров из базы данных."""
-    print("🔄 Загрузка ключевых слов-триггеров из Supabase...")
+    print("🔄 Загрузка ключевых слов-триггеров из Neon...")
+    sql = "SELECT keyword FROM public.keyword_triggers"
     try:
-        response = supabase.table('keyword_triggers').select('keyword').execute()
-        if response.data:
-            # Преобразуем список словарей [{'keyword': 'слово1'}, {'keyword': 'слово2'}]
-            # в простой список ['слово1', 'слово2']
-            keywords = [item['keyword'] for item in response.data]
-            print(f"✅ Загружено {len(keywords)} ключевых слов.")
-            return keywords
-        print("⚠️ Ключевые слова в базе данных не найдены.")
-        return []
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                # Преобразуем список кортежей [('слово1',), ...] в простой список ['слово1', ...]
+                keywords = [item[0] for item in cur.fetchall()]
+                print(f"✅ Загружено {len(keywords)} ключевых слов.")
+                return keywords
     except Exception as e:
         print(f"❌ Ошибка при загрузке ключевых слов: {e}")
         return []
 
-# --- НОВЫЙ ФУНКЦИОНАЛ ДЛЯ ОТСЛЕЖИВАНИЯ ЕЖЕДНЕВНЫХ КОНТАКТОВ ---
-
 def was_user_contacted_today(user_id: int) -> bool:
-    """
-    Проверяет, был ли уже контакт с пользователем СЕГОДНЯ.
-    """
+    sql = "SELECT 1 FROM public.daily_user_contacts WHERE user_id = %s AND last_contact_date = %s"
     try:
-        today_str = date.today().isoformat()
-        response = supabase.table('daily_user_contacts').select('user_id').eq('user_id', user_id).eq('last_contact_date', today_str).single().execute()
-        # Если данные есть (response.data не пустой), значит контакт сегодня был.
-        return response.data is not None
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (user_id, date.today()))
+                # Если fetchone() что-то вернул, значит запись есть
+                return cur.fetchone() is not None
     except Exception:
-        # Если запись не найдена, single() вызовет ошибку, что для нас равносильно False.
         return False
 
 def record_user_contact(user_id: int):
-    """
-    Записывает или обновляет запись о контакте с пользователем на СЕГОДНЯ.
-    """
     print(f"🔄 Запись о контакте с пользователем {user_id} на сегодня...")
+    sql = """
+        INSERT INTO public.daily_user_contacts (user_id, last_contact_date) 
+        VALUES (%s, %s)
+        ON CONFLICT (user_id) 
+        DO UPDATE SET last_contact_date = EXCLUDED.last_contact_date;
+    """
     try:
-        today_str = date.today().isoformat()
-        supabase.table('daily_user_contacts').upsert({
-            'user_id': user_id,
-            'last_contact_date': today_str
-        }).execute()
-        print(f"✅ Успешно записан контакт с пользователем {user_id}.")
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (user_id, date.today()))
+            conn.commit()
+            print(f"✅ Успешно записан контакт с пользователем {user_id}.")
     except Exception as e:
         print(f"❌ Ошибка при записи контакта с пользователем {user_id}: {e}")
